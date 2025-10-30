@@ -2,6 +2,7 @@
 /**
  * 任务列表 Tab
  */
+import router from '@ohos.router';
 import promptAction from '@ohos.promptAction';
 import storage, { StorageKeys } from '../utils/storage';
 import http from '../utils/http';
@@ -26,9 +27,6 @@ export default struct MissionTab {
     await this.loadLastSyncTime();
   }
 
-  /**
-   * 加载任务列表（从本地）
-   */
   async loadTasks() {
     try {
       console.log('从本地加载任务列表...');
@@ -53,9 +51,6 @@ export default struct MissionTab {
     }
   }
 
-  /**
-   * 加载最后同步时间
-   */
   async loadLastSyncTime() {
     try {
       let timeStr: string = await storage.getUserData(
@@ -73,9 +68,6 @@ export default struct MissionTab {
     }
   }
 
-  /**
-   * 同步任务列表（从服务器）
-   */
   async syncTasks() {
     if (!this.currentToken) {
       promptAction.showToast({
@@ -89,7 +81,6 @@ export default struct MissionTab {
       this.syncing = true;
       console.log('========== 开始同步任务 ==========');
 
-      // 检查网络
       let isOnline = await http.isOnline();
       if (!isOnline) {
         promptAction.showToast({
@@ -111,14 +102,12 @@ export default struct MissionTab {
       if (response.code === 0 && response.dataList) {
         this.tasks = response.dataList as FollowUpTask[];
 
-        // 保存到本地
         await storage.setUserData(
           this.currentUsername,
           StorageKeys.FOLLOW_UP_TASKS,
           JSON.stringify(this.tasks)
         );
 
-        // 更新同步时间
         const now = Date.now();
         await storage.setUserData(
           this.currentUsername,
@@ -153,9 +142,6 @@ export default struct MissionTab {
     }
   }
 
-  /**
-   * 过滤任务
-   */
   getFilteredTasks(): FollowUpTask[] {
     if (!this.searchText) {
       return this.tasks;
@@ -169,48 +155,46 @@ export default struct MissionTab {
     );
   }
 
-  /**
-   * 获取任务状态文本
-   */
   getStateText(state: number): string {
     switch (state) {
-      case 0:
-        return '待执行';
-      case 1:
-        return '进行中';
-      case 2:
-        return '已完成';
-      default:
-        return '未知';
+      case 0: return '待执行';
+      case 1: return '进行中';
+      case 2: return '已完成';
+      default: return '未知';
     }
   }
 
-  /**
-   * 获取任务状态颜色
-   */
   getStateColor(state: number): string {
     switch (state) {
-      case 0:
-        return '#FF6B00';
-      case 1:
-        return '#1890FF';
-      case 2:
-        return '#52C41A';
-      default:
-        return '#999999';
+      case 0: return '#FF6B00';
+      case 1: return '#1890FF';
+      case 2: return '#52C41A';
+      default: return '#999999';
     }
   }
 
   /**
-   * 点击任务
+   * ✅ 点击任务，跳转到详情页
    */
   handleTaskClick(task: FollowUpTask) {
-    console.log('点击任务:', task.patient_no);
-    promptAction.showToast({
-      message: `打开任务：${task.patient_no}`,
-      duration: 1500
+    console.log('点击任务:', task.patient_no, '任务ID:', task.id);
+
+    router.pushUrl({
+      url: 'pages/MissionPage',
+      params: {
+        taskId: task.id,
+        token: this.currentToken,
+        username: this.currentUsername
+      }
+    }).then(() => {
+      console.log('✅ 跳转到任务详情页成功');
+    }).catch((err: Error) => {
+      console.error('❌ 跳转失败:', err);
+      promptAction.showToast({
+        message: '打开失败',
+        duration: 1500
+      });
     });
-    // TODO: 跳转到任务详情页
   }
 
   build() {
@@ -304,7 +288,6 @@ export default struct MissionTab {
           ForEach(this.getFilteredTasks(), (task: FollowUpTask) => {
             ListItem() {
               Column() {
-                // 第一行：患者编号 + 状态
                 Row() {
                   Text(task.patient_no)
                     .fontSize(16)
@@ -323,7 +306,6 @@ export default struct MissionTab {
                 .width('100%')
                 .margin({ bottom: 8 })
 
-                // 第二行：项目名称
                 Row() {
                   Text(`项目：${task.project_name}`)
                     .fontSize(14)
@@ -332,7 +314,6 @@ export default struct MissionTab {
                 .width('100%')
                 .margin({ bottom: 4 })
 
-                // 第三行：创建人 + 完成度
                 Row() {
                   Text(`创建人：${task.creator}`)
                     .fontSize(12)
@@ -347,7 +328,6 @@ export default struct MissionTab {
                 .width('100%')
                 .margin({ bottom: 4 })
 
-                // 第四行：创建时间
                 Row() {
                   Text(`创建时间：${task.create_time}`)
                     .fontSize(12)
@@ -360,7 +340,7 @@ export default struct MissionTab {
               .backgroundColor('#FFFFFF')
               .borderRadius(8)
               .onClick(() => {
-                this.handleTaskClick(task);
+                this.handleTaskClick(task);  // ✅ 跳转到详情页
               })
             }
           })
