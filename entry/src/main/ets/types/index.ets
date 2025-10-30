@@ -25,6 +25,9 @@ export interface UserInfo {
   role?: string;
   organId?: string;
   organName?: string;
+  real_name?: string;  // ✅ 新增：真实姓名
+  mobile?: string;     // ✅ 新增：手机号
+  utime?: string;      // ✅ 新增：更新时间
 }
 
 // 登录请求
@@ -37,6 +40,20 @@ export interface LoginRequest {
 export interface LoginResponse {
   token: string;
   userInfo: UserInfo;
+}
+
+// ✅ 新增：Token 验证请求
+export interface TokenVerifyRequest {
+  token: string;
+}
+
+// ✅ 新增：Token 验证响应
+export interface TokenVerifyResponse {
+  id: number;
+  username: string;
+  real_name: string;
+  mobile: string;
+  utime: string;
 }
 
 // 本地用户数据（单个用户）
@@ -154,6 +171,7 @@ export interface FormTable {
   table_name: string;
   user_id: number;
   create_time: string;
+  state:number;
   multi_line: number;  // 0=单行，1=多行
   fields: FormField[];
 }

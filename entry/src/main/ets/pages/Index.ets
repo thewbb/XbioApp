@@ -4,7 +4,8 @@
  */
 import router from '@ohos.router';
 import storage, { StorageKeys } from '../utils/storage';
-import { CurrentUser, LocalUser, LocalUsers, UserInfo } from '../types';
+import http from '../utils/http';
+import { CurrentUser, LocalUser, LocalUsers, UserInfo, TokenVerifyRequest, TokenVerifyResponse } from '../types';
 import MissionTab from './MissionTab';
 import MissionLogTab from './MissionLogTab';
 import ProfileTab from './ProfileTab';
@@ -71,8 +72,42 @@ struct Index {
       this.currentToken = token;
       console.log('Token:', token ? '已获取' : '未获取');
 
-      // 步骤3: 获取用户信息
-      console.log('步骤3: 获取用户信息...');
+      if (!token) {
+        console.log('❌ Token 为空，跳转到登录页');
+        this.checkingLogin = false;
+        setTimeout(() => {
+          router.replaceUrl({ url: 'pages/UserPage' });
+        }, 100);
+        return;
+      }
+
+      // ✅ 步骤3: 如果在线，验证 Token 有效性
+      console.log('步骤3: 检查网络并验证 Token...');
+      let isOnline = await http.isOnline();
+      console.log('网络状态:', isOnline ? '在线' : '离线');
+
+      if (isOnline) {
+        console.log('正在验证 Token 有效性...');
+        let tokenValid = await this.verifyToken(token);
+
+        if (!tokenValid) {
+          console.log('❌ Token 验证失败，跳转到登录页');
+          // 清除登录状态
+          await storage.remove(StorageKeys.CURRENT_USER);
+          this.checkingLogin = false;
+          setTimeout(() => {
+            router.replaceUrl({ url: 'pages/UserPage' });
+          }, 100);
+          return;
+        }
+
+        console.log('✅ Token 验证成功');
+      } else {
+        console.log('⚠️ 离线状态，跳过 Token 验证');
+      }
+
+      // 步骤4: 获取用户信息
+      console.log('步骤4: 获取用户信息...');
       let localUsersStr: string = await storage.get(StorageKeys.LOCAL_USERS);
 
       if (localUsersStr) {
@@ -81,7 +116,7 @@ struct Index {
 
         if (localUser && localUser.userInfo) {
           this.userInfo = localUser.userInfo;
-          console.log('✅ 用户信息获取成功:', this.userInfo.name);
+          console.log('✅ 用户信息获取成功:', this.userInfo.name || this.userInfo.real_name);
         }
       }
 
@@ -96,6 +131,71 @@ struct Index {
       setTimeout(() => {
         router.replaceUrl({ url: 'pages/UserPage' });
       }, 100);
+    }
+  }
+
+  /**
+   * ✅ 验证 Token 有效性
+   */
+  async verifyToken(token: string): Promise<boolean> {
+    try {
+      const request: TokenVerifyRequest = {
+        token: token
+      };
+
+      console.log('发送 Token 验证请求...');
+      let response = await http.post('/mobile/info.json', request);
+      console.log('Token 验证响应:', JSON.stringify(response));
+
+      if (response.code === 0 && response.dataMap) {
+        let verifyData = response.dataMap as TokenVerifyResponse;
+        console.log('✅ Token 有效，用户:', verifyData.username, verifyData.real_name);
+
+        // ✅ 更新本地用户信息
+        await this.updateLocalUserInfo(verifyData);
+
+        return true;
+      } else {
+        console.log('❌ Token 无效，code:', response.code, 'message:', response.message);
+        return false;
+      }
+    } catch (e) {
+      console.error('❌ Token 验证异常:', e);
+      // 网络异常时，认为 Token 可能有效（离线模式）
+      return true;
+    }
+  }
+
+  /**
+   * ✅ 更新本地用户信息
+   */
+  async updateLocalUserInfo(verifyData: TokenVerifyResponse) {
+    try {
+      let localUsersStr: string = await storage.get(StorageKeys.LOCAL_USERS);
+      if (!localUsersStr) {
+        return;
+      }
+
+      let localUsers: LocalUsers = LocalUsers.fromJSON(localUsersStr);
+      let localUser: LocalUser | undefined = localUsers.get(this.currentUsername);
+
+      if (localUser) {
+        // 更新用户信息
+        localUser.userInfo.real_name = verifyData.real_name;
+        localUser.userInfo.mobile = verifyData.mobile;
+        localUser.userInfo.utime = verifyData.utime;
+
+        // 保存回本地
+        localUsers.set(this.currentUsername, localUser);
+        await storage.set(StorageKeys.LOCAL_USERS, localUsers.toJSON());
+
+        // 更新当前显示的用户信息
+        this.userInfo = localUser.userInfo;
+
+        console.log('✅ 本地用户信息已更新');
+      }
+    } catch (e) {
+      console.error('更新本地用户信息失败:', e);
     }
   }
 
@@ -125,7 +225,7 @@ struct Index {
             .fontSize(80)
             .margin({ bottom: 20 })
 
-          Text('加载中...')
+          Text('验证登录状态...')
             .fontSize(18)
             .fontColor('#666666')
 
