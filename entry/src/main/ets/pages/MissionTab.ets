@@ -289,7 +289,7 @@ export default struct MissionTab {
     router.pushUrl({
       url: 'pages/MissionPage',
       params: {
-        taskId: task.id,
+        task: task,              // ✅ 传递完整任务对象
         token: this.currentToken,
         username: this.currentUsername
       }
@@ -300,6 +300,7 @@ export default struct MissionTab {
       this.toastController.show('打开失败');
     });
   }
+
 
   build() {
     Stack() {

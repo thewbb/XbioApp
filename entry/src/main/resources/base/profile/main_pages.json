@@ -3,6 +3,6 @@
     "pages/Index",
     "pages/UserPage",
     "pages/MissionPage",
-    "pages/FollowUpPage"
+    "pages/FormPage"
   ]
 }
