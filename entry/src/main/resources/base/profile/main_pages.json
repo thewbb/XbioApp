@@ -3,6 +3,7 @@
     "pages/Index",
     "pages/UserPage",
     "pages/MissionPage",
-    "pages/FormPage"
+    "pages/FormPage",
+    "pages/RecordDetailPage"
   ]
 }

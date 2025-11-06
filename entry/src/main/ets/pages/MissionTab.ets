@@ -1,7 +1,11 @@
 
 /**
- * 任务列表 Tab - 正确的进度逻辑
+ * 任务列表 Tab - 带同步检查
  *
+ * 功能：
+ * - 同步前检查是否有未上传的本地数据
+ * - 如果有未上传数据，弹出提示对话框
+ * - 引导用户先上传数据
  * percent: 整个任务的完成百分比（如 3 张表完成 2 张 = 67%）
  * task.state: 任务状态（0=待执行，1=进行中，2=已完成）
  * table.state: 表格填写状态（0=未填写，1=已填写）
@@ -11,6 +15,7 @@ import storage, { StorageKeys } from '../utils/storage';
 import http from '../utils/http';
 import { FollowUpTask, TaskListRequest } from '../types';
 import { CustomToast, ToastController } from '../components/CustomToast';
+import promptAction from '@ohos.promptAction';
 
 @Component
 export default struct MissionTab {
@@ -22,6 +27,10 @@ export default struct MissionTab {
   @State syncing: boolean = false;
   @State lastSyncTime: string = '';
   @State toastController: ToastController = new ToastController();
+
+  // ✅ 对话框控制
+  @State showSyncConfirmDialog: boolean = false;
+  @State pendingUploadCount: number = 0;
 
   async aboutToAppear() {
     console.log('========== MissionTab 加载 ==========');
@@ -102,9 +111,32 @@ export default struct MissionTab {
   }
 
   /**
+   * ✅ 检查是否有未上传的本地数据
+   */
+  async checkPendingUploads(): Promise<number> {
+    try {
+      let count = 0;
+
+      // 遍历所有任务，统计未上传的记录
+      for (let task of this.tasks) {
+        if (task.local_records) {
+          const pendingRecords = task.local_records.filter(r => !r.is_uploaded);
+          count += pendingRecords.length;
+        }
+      }
+
+      console.log('未上传的记录数:', count);
+      return count;
+    } catch (e) {
+      console.error('检查未上传数据失败:', e);
+      return 0;
+    }
+  }
+
+  /**
    * 同步任务
    */
-  async syncTasks() {
+  async syncTasks(forceSync: boolean = false) {
     if (!this.currentToken) {
       console.log('❌ Token 为空');
       this.toastController.show('未获取到 Token，请重新登录');
@@ -139,6 +171,22 @@ export default struct MissionTab {
           : [];
 
         console.log('服务器任务数量:', serverTasks.length);
+
+        // ✅ 如果不是强制同步，保留本地未上传的记录
+        if (!forceSync) {
+          // 合并本地未上传的记录
+          serverTasks.forEach(serverTask => {
+            const localTask = this.tasks.find(t => t.id === serverTask.id);
+            if (localTask && localTask.local_records) {
+              // 只保留未上传的记录
+              const pendingRecords = localTask.local_records.filter(r => !r.is_uploaded);
+              if (pendingRecords.length > 0) {
+                serverTask.local_records = pendingRecords;
+                console.log(`任务 ${serverTask.id} 保留了 ${pendingRecords.length} 条未上传记录`);
+              }
+            }
+          });
+        }
 
         // 更新状态
         this.tasks = serverTasks;
@@ -183,16 +231,43 @@ export default struct MissionTab {
   }
 
   /**
-   * 触发同步
+   * ✅ 触发同步（带检查）
    */
-  handleSync() {
+  async handleSync() {
     if (this.syncing) {
       return;
     }
 
     console.log('🔄 触发同步...');
+
+    // ✅ 检查是否有未上传的数据
+    this.pendingUploadCount = await this.checkPendingUploads();
+
+    if (this.pendingUploadCount > 0) {
+      // 显示确认对话框
+      this.showSyncConfirmDialog = true;
+    } else {
+      // 没有未上传数据，直接同步
+      this.syncing = true;
+      this.syncTasks(false);
+    }
+  }
+
+  /**
+   * ✅ 确认强制同步
+   */
+  handleConfirmSync() {
+    this.showSyncConfirmDialog = false;
     this.syncing = true;
-    this.syncTasks();
+    this.syncTasks(true);  // 强制同步，覆盖本地数据
+  }
+
+  /**
+   * ✅ 取消同步
+   */
+  handleCancelSync() {
+    this.showSyncConfirmDialog = false;
+    this.toastController.show('已取消同步');
   }
 
   /**
@@ -300,7 +375,6 @@ export default struct MissionTab {
       this.toastController.show('打开失败');
     });
   }
-
 
   build() {
     Stack() {
@@ -504,6 +578,82 @@ export default struct MissionTab {
       }
       .width('100%')
       .height('100%')
+
+      // ✅ 同步确认对话框
+      if (this.showSyncConfirmDialog) {
+        Column() {
+          Column() {
+            // 警告图标
+            Text('⚠️')
+              .fontSize(48)
+              .margin({ bottom: 16 })
+
+            // 标题
+            Text('检测到本地未上传数据')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#333333')
+              .margin({ bottom: 12 })
+
+            // 消息
+            Text(`您有 ${this.pendingUploadCount} 份表单数据尚未上传，同步会覆盖这些本地数据。建议先前往【记录】页面上传数据。`)
+              .fontSize(14)
+              .fontColor('#666666')
+              .textAlign(TextAlign.Center)
+              .lineHeight(22)
+              .margin({ bottom: 24 })
+
+            // 按钮组
+            Row() {
+              Button('取消')
+                .fontSize(16)
+                .fontColor('#333333')
+                .backgroundColor('#FFFFFF')
+                .border({
+                  width: 1,
+                  color: '#E5E5E5'
+                })
+                .width('48%')
+                .height(44)
+                .borderRadius(8)
+                .onClick(() => {
+                  this.handleCancelSync();
+                })
+
+              Button('仍要同步')
+                .fontSize(16)
+                .fontColor('#FFFFFF')
+                .backgroundColor('#FF6B00')
+                .width('48%')
+                .height(44)
+                .borderRadius(8)
+                .onClick(() => {
+                  this.handleConfirmSync();
+                })
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceBetween)
+          }
+          .width('85%')
+          .padding(24)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(16)
+          .shadow({
+            radius: 16,
+            color: '#00000040',
+            offsetX: 0,
+            offsetY: 4
+          })
+        }
+        .width('100%')
+        .height('100%')
+        .backgroundColor('rgba(0, 0, 0, 0.5)')
+        .justifyContent(FlexAlign.Center)
+        .onClick(() => {
+          // 点击背景关闭
+          this.handleCancelSync();
+        })
+      }
 
       // Toast 组件
       CustomToast({ controller: this.toastController })

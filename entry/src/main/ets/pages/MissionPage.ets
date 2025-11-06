@@ -1,15 +1,18 @@
 
 /**
- * 随访任务详情页 - 使用 taskList 数据
+ * 随访任务详情页 - 支持本地数据
  *
  * 功能：
- * - 直接从 taskList 获取任务数据，无需请求 taskDetail 接口
- * - table.state: 0=未填写（可填写），1=已填写（不可再填）
- * - 优化布局和配色
+ * - 从本地加载最新任务数据（包含 local_records）
+ * - 显示本地保存状态：📝 待上传
+ * - 已保存的表单可以点击进入编辑
+ * - table.state: 0=未填写，1=已填写
+ * - 页面显示时自动刷新数据
  */
 import router from '@ohos.router';
 import { FollowUpTask, FormTable, FormField } from '../types';
 import { CustomToast, ToastController } from '../components/CustomToast';
+import storage from '../utils/storage';
 
 /**
  * 任务统计信息接口
@@ -18,6 +21,7 @@ interface TaskStats {
   total: number;
   completed: number;
   pending: number;
+  localSaved: number;  // 本地已保存但未上传的数量
 }
 
 @Entry
@@ -48,7 +52,6 @@ struct MissionPage {
 
     console.log('任务ID:', this.currentTask?.id);
     console.log('患者编号:', this.currentTask?.patient_no);
-    console.log('Token:', this.token ? '已获取' : '未获取');
     console.log('用户名:', this.currentUsername);
 
     if (!this.currentTask) {
@@ -59,16 +62,81 @@ struct MissionPage {
       return;
     }
 
+    // ✅ 从本地加载最新的任务数据
+    await this.loadLatestTaskData();
+
     // 打印任务详情
-    if (this.currentTask.project && this.currentTask.project.tables) {
+    this.printTaskDetails();
+  }
+
+  /**
+   * ✅ 页面显示时刷新数据
+   */
+  async onPageShow() {
+    console.log('========== MissionPage 显示 ==========');
+
+    // 重新加载最新的任务数据
+    if (this.currentTask && this.currentUsername) {
+      await this.loadLatestTaskData();
+      console.log('✅ 页面显示时已刷新数据');
+    }
+  }
+
+  /**
+   * 打印任务详情（调试用）
+   */
+  printTaskDetails() {
+    if (this.currentTask?.project && this.currentTask.project.tables) {
       console.log('表单数量:', this.currentTask.project.tables.length);
 
       this.currentTask.project.tables.forEach((table, index) => {
+        const hasLocalData = this.hasLocalRecord(table.id);
+        const isUploaded = this.isRecordUploaded(table.id);
         console.log(`表单 ${index + 1}: ${table.step_name}`);
         console.log(`  - state: ${table.state} (${table.state === 1 ? '已填写' : '未填写'})`);
+        console.log(`  - 本地数据: ${hasLocalData ? '有' : '无'}${hasLocalData && !isUploaded ? ' (待上传)' : ''}`);
         console.log(`  - 字段数: ${table.fields.length}`);
       });
     }
+  }
+
+  /**
+   * 从本地加载最新的任务数据
+   */
+  async loadLatestTaskData() {
+    try {
+      const tasks = await storage.loadFollowUpTasks(this.currentUsername);
+      const latestTask = tasks.find(t => t.id === this.currentTask?.id);
+
+      if (latestTask) {
+        // 更新当前任务数据（保留本地记录）
+        this.currentTask = latestTask;
+        console.log('✅ 已加载最新任务数据，本地记录数:', latestTask.local_records?.length || 0);
+      }
+    } catch (e) {
+      console.error('❌ 加载本地任务数据失败:', e);
+    }
+  }
+
+  /**
+   * 检查表单是否有本地记录
+   */
+  hasLocalRecord(tableId: number): boolean {
+    if (!this.currentTask?.local_records) {
+      return false;
+    }
+    return this.currentTask.local_records.some(r => r.table_id === tableId);
+  }
+
+  /**
+   * 检查记录是否已上传
+   */
+  isRecordUploaded(tableId: number): boolean {
+    if (!this.currentTask?.local_records) {
+      return false;
+    }
+    const record = this.currentTask.local_records.find(r => r.table_id === tableId);
+    return record?.is_uploaded || false;
   }
 
   /**
@@ -97,31 +165,58 @@ struct MissionPage {
 
   /**
    * 获取表单状态文本
-   * table.state: 0=未填写，1=已填写
    */
-  getTableStateText(state: number): string {
+  getTableStateText(tableId: number, state: number): string {
+    const hasLocalData = this.hasLocalRecord(tableId);
+    const isUploaded = this.isRecordUploaded(tableId);
+
+    if (hasLocalData && !isUploaded) {
+      return '待上传';
+    }
     return state === 1 ? '已填写' : '未填写';
   }
 
   /**
    * 获取表单状态颜色
    */
-  getTableStateColor(state: number): string {
+  getTableStateColor(tableId: number, state: number): string {
+    const hasLocalData = this.hasLocalRecord(tableId);
+    const isUploaded = this.isRecordUploaded(tableId);
+
+    if (hasLocalData && !isUploaded) {
+      return '#1890FF';  // 待上传用蓝色
+    }
     return state === 1 ? '#52C41A' : '#FF6B00';
   }
 
   /**
    * 获取表单状态图标
    */
-  getTableStateIcon(state: number): string {
+  getTableStateIcon(tableId: number, state: number): string {
+    const hasLocalData = this.hasLocalRecord(tableId);
+    const isUploaded = this.isRecordUploaded(tableId);
+
+    if (hasLocalData && !isUploaded) {
+      return '📝';  // 待上传显示编辑图标
+    }
     return state === 1 ? '✓' : '○';
   }
 
   /**
    * 判断表单是否可以填写
-   * state=0 可以填写，state=1 已填写不可再填
+   * - 未填写（state=0）可以填写
+   * - 有本地记录但未上传，可以继续编辑
    */
   isTableFillable(table: FormTable): boolean {
+    const hasLocalData = this.hasLocalRecord(table.id);
+    const isUploaded = this.isRecordUploaded(table.id);
+
+    // 有本地数据但未上传，可以编辑
+    if (hasLocalData && !isUploaded) {
+      return true;
+    }
+
+    // 未填写可以填写
     return table.state === 0;
   }
 
@@ -129,31 +224,41 @@ struct MissionPage {
    * 点击表单
    */
   handleFormClick(table: FormTable) {
-    console.log('点击表单:', table.step_name, 'state:', table.state);
+    const hasLocalData = this.hasLocalRecord(table.id);
+    const isUploaded = this.isRecordUploaded(table.id);
 
-    // 检查是否已填写
-    if (table.state === 1) {
-      this.toastController.show('该表单已填写，无需重复填写');
+    console.log('点击表单:', table.step_name);
+    console.log('  state:', table.state);
+    console.log('  hasLocalData:', hasLocalData);
+    console.log('  isUploaded:', isUploaded);
+
+    // 已上传的不能再编辑
+    if (table.state === 1 && isUploaded) {
+      this.toastController.show('该表单已提交，无法修改');
       return;
     }
 
-    // 未填写，跳转到填写页面
-    console.log('跳转到填写页面');
+    // 可以填写或编辑
+    if (this.isTableFillable(table)) {
+      console.log('跳转到填写页面');
 
-    router.pushUrl({
-      url: 'pages/FormPage',
-      params: {
-        task: this.currentTask,     // 传递完整任务对象
-        table: table,               // 传递当前表单对象
-        token: this.token,
-        username: this.currentUsername
-      }
-    }).then(() => {
-      console.log('✅ 跳转成功');
-    }).catch((err: Error) => {
-      console.error('❌ 跳转失败:', err);
-      this.toastController.show('打开失败');
-    });
+      router.pushUrl({
+        url: 'pages/FormPage',
+        params: {
+          task: this.currentTask,
+          table: table,
+          token: this.token,
+          username: this.currentUsername
+        }
+      }).then(() => {
+        console.log('✅ 跳转成功');
+      }).catch((err: Error) => {
+        console.error('❌ 跳转失败:', err);
+        this.toastController.show('打开失败');
+      });
+    } else {
+      this.toastController.show('该表单已填写');
+    }
   }
 
   /**
@@ -161,19 +266,31 @@ struct MissionPage {
    */
   getTaskStats(): TaskStats {
     if (!this.currentTask || !this.currentTask.project || !this.currentTask.project.tables) {
-      const emptyStats: TaskStats = { total: 0, completed: 0, pending: 0 };
+      const emptyStats: TaskStats = { total: 0, completed: 0, pending: 0, localSaved: 0 };
       return emptyStats;
     }
 
     const tables = this.currentTask.project.tables;
     const total: number = tables.length;
     const completed: number = tables.filter((t: FormTable) => t.state === 1).length;
+
+    // 计算本地已保存但未上传的数量
+    let localSaved = 0;
+    tables.forEach(table => {
+      const hasLocalData = this.hasLocalRecord(table.id);
+      const isUploaded = this.isRecordUploaded(table.id);
+      if (hasLocalData && !isUploaded) {
+        localSaved++;
+      }
+    });
+
     const pending: number = total - completed;
 
     const stats: TaskStats = {
       total: total,
       completed: completed,
-      pending: pending
+      pending: pending,
+      localSaved: localSaved
     };
 
     return stats;
@@ -186,7 +303,7 @@ struct MissionPage {
     if (!table.fields) {
       return 0;
     }
-    let length:number = table.fields.filter((f: FormField) => f.is_editable === '1').length;
+    let length: number = table.fields.filter((f: FormField) => f.is_editable === '1').length;
     return length;
   }
 
@@ -325,6 +442,34 @@ struct MissionPage {
                   }
                   .width('100%')
                   .alignItems(VerticalAlign.Center)
+
+                  // ✅ 显示本地待上传数量
+                  if (this.getTaskStats().localSaved > 0) {
+                    Divider()
+                      .color('#F0F0F0')
+                      .margin({ top: 10, bottom: 10 })
+
+                    Row() {
+                      Text('待上传')
+                        .fontSize(14)
+                        .fontColor('#999999')
+                        .width(90)
+
+                      Row() {
+                        Text(`${this.getTaskStats().localSaved} 份`)
+                          .fontSize(14)
+                          .fontColor('#1890FF')
+                          .fontWeight(FontWeight.Medium)
+
+                        Text('📝')
+                          .fontSize(14)
+                          .margin({ left: 4 })
+                      }
+                      .layoutWeight(1)
+                    }
+                    .width('100%')
+                    .alignItems(VerticalAlign.Center)
+                  }
                 }
                 .width('100%')
               }
@@ -352,8 +497,15 @@ struct MissionPage {
 
                     Blank()
 
-                    // 显示待填写数量
-                    if (this.getTaskStats().pending > 0) {
+                    // 显示状态提示
+                    if (this.getTaskStats().localSaved > 0) {
+                      Text(`${this.getTaskStats().localSaved} 份待上传`)
+                        .fontSize(11)
+                        .fontColor('#1890FF')
+                        .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+                        .backgroundColor('#E6F7FF')
+                        .borderRadius(12)
+                    } else if (this.getTaskStats().pending > 0) {
                       Text(`还有 ${this.getTaskStats().pending} 张待填写`)
                         .fontSize(11)
                         .fontColor('#FF6B00')
@@ -431,9 +583,9 @@ struct MissionPage {
     Row() {
       // 左侧状态指示器
       Column() {
-        Text(this.getTableStateIcon(table.state))
+        Text(this.getTableStateIcon(table.id, table.state))
           .fontSize(24)
-          .fontColor(this.getTableStateColor(table.state))
+          .fontColor(this.getTableStateColor(table.id, table.state))
           .fontWeight(FontWeight.Bold)
       }
       .width(40)
@@ -446,16 +598,16 @@ struct MissionPage {
           Text(table.step_name)
             .fontSize(15)
             .fontWeight(FontWeight.Medium)
-            .fontColor(table.state === 1 ? '#999999' : '#333333')
+            .fontColor(this.isTableFillable(table) ? '#333333' : '#999999')
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
 
-          Text(this.getTableStateText(table.state))
+          Text(this.getTableStateText(table.id, table.state))
             .fontSize(11)
             .fontColor('#FFFFFF')
             .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-            .backgroundColor(this.getTableStateColor(table.state))
+            .backgroundColor(this.getTableStateColor(table.id, table.state))
             .borderRadius(10)
             .margin({ left: 8 })
         }
@@ -480,7 +632,19 @@ struct MissionPage {
           Blank()
 
           // 操作提示
-          if (table.state === 1) {
+          if (this.hasLocalRecord(table.id) && !this.isRecordUploaded(table.id)) {
+            Row() {
+              Text('继续编辑')
+                .fontSize(12)
+                .fontColor('#1890FF')
+                .fontWeight(FontWeight.Medium)
+
+              Text('›')
+                .fontSize(14)
+                .fontColor('#1890FF')
+                .margin({ left: 2 })
+            }
+          } else if (table.state === 1) {
             Text('已完成')
               .fontSize(12)
               .fontColor('#52C41A')
@@ -505,13 +669,13 @@ struct MissionPage {
     }
     .width('100%')
     .padding(14)
-    .backgroundColor(table.state === 1 ? '#FAFAFA' : '#FFFFFF')
+    .backgroundColor(this.isTableFillable(table) ? '#FFFFFF' : '#FAFAFA')
     .borderRadius(12)
     .margin({ bottom: index < this.currentTask!.project!.tables.length - 1 ? 10 : 0 })
-    .opacity(table.state === 1 ? 0.75 : 1.0)
+    .opacity(this.isTableFillable(table) ? 1.0 : 0.75)
     .shadow({
       radius: 6,
-      color: table.state === 1 ? '#00000003' : '#00000008',
+      color: this.isTableFillable(table) ? '#00000008' : '#00000003',
       offsetX: 0,
       offsetY: 2
     })

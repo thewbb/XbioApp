@@ -188,6 +188,14 @@ export interface Project {
   tables: FormTable[];
 }
 
+export interface FormRecord {
+  table_id: number;           // 表单ID
+  step_id: number;            // 步骤ID
+  data: Record<string, string>;  // 表单数据
+  filled_time: string;        // 填写时间
+  is_uploaded: boolean;       // 是否已上传
+}
+
 // 随访任务
 export interface FollowUpTask {
   id: number;
@@ -203,6 +211,9 @@ export interface FollowUpTask {
   sf_table_ids: string;
   comment?: string;
   project?: Project;
+
+  local_records?: FormRecord[];  // 本地保存的表单数据
+
 }
 
 // 任务列表请求
