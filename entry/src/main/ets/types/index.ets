@@ -204,6 +204,7 @@ export interface FollowUpTask {
   patient_no: string;
   from_user_id: number;
   to_user_id: number;
+  name:string;
   creator: string;
   create_time: string;
   state: number;  // 0=待执行，1=进行中，2=已完成

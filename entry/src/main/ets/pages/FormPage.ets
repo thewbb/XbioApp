@@ -2,25 +2,7 @@
 /**
  * 表单填写页面
  *
- * 功能：
- * - 根据字段配置动态渲染表单
- * - 支持所有字段类型：
- *   - decimal（数值）
- *   - input（文本框）
- *   - inputUnit（带单位文本框）
- *   - text（大文本框）
- *   - select（下拉框）
- *   - checkbox（多选）
- *   - radio（单选）
- *   - date（日期）
- *   - datetime（日期时间）
- *   - time（时间）
- *   - description（描述）
- *   - line（分割线）
- *   - file（文件）
- *   - image（图像）
- *   - fileOcr（文件需识别）
- *   - imageDesc（描述图像）
+ * 修复所有类型错误
  */
 import router from '@ohos.router';
 import { FollowUpTask, FormTable, FormField, FormRecord } from '../types';
@@ -28,9 +10,11 @@ import { CustomToast, ToastController } from '../components/CustomToast';
 import http from '../utils/http';
 import storage from '../utils/storage';
 
-/**
- * 表单提交数据接口
- */
+interface OptionItem {
+  label: string;
+  value: string;
+}
+
 interface SubmitFormData {
   token: string;
   task_id: number | undefined;
@@ -52,25 +36,11 @@ struct FormPage {
   @State saving: boolean = false;
   @State toastController: ToastController = new ToastController();
 
-  // ✅ 选择器相关
-  @State showSelectDialog: boolean = false;
-  @State currentSelectField: FormField | null = null;
-  @State selectOptions: string[] = [];
-  @State selectedIndex: number = -1;
-
-  // ✅ 多选相关
-  @State showCheckboxDialog: boolean = false;
-  @State currentCheckboxField: FormField | null = null;
-  @State checkboxOptions: string[] = [];
-  @State checkedItems: boolean[] = [];
-
-  // ✅ 用于延迟返回
   private backTimer: number = -1;
 
   async aboutToAppear() {
     console.log('========== FormPage 加载 ==========');
 
-    // 获取路由参数
     const params = router.getParams() as Record<string, Object>;
 
     if (params && params['task']) {
@@ -99,7 +69,6 @@ struct FormPage {
       return;
     }
 
-    // 初始化表单数据
     await this.initFormData();
   }
 
@@ -120,9 +89,6 @@ struct FormPage {
     }, delay);
   }
 
-  /**
-   * 初始化表单数据
-   */
   async initFormData() {
     if (!this.currentTable || !this.currentTable.fields) {
       return;
@@ -130,7 +96,6 @@ struct FormPage {
 
     const data = new Map<string, string>();
 
-    // 尝试加载本地保存的数据
     const savedRecord = await storage.getFormRecord(
       this.currentUsername,
       this.currentTask!.id,
@@ -138,34 +103,25 @@ struct FormPage {
     );
 
     this.currentTable.fields.forEach((field: FormField) => {
-      // 只初始化可编辑字段
       if (field.is_editable === '1') {
-        // 优先使用本地保存的值
         if (savedRecord && savedRecord.data[field.field_name]) {
           data.set(field.field_name, savedRecord.data[field.field_name]);
-        }
-        // 其次使用默认值
-        else if (field.default_value && field.default_value !== '' && field.default_value !== 'NOW()') {
+        } else if (field.default_value && field.default_value !== '' && field.default_value !== 'NOW()') {
           data.set(field.field_name, field.default_value);
-        }
-        // 如果是日期字段且默认值是 NOW()，设置当前日期
-        else if (field.show_type === 'date' && field.default_value === 'NOW()') {
+        } else if (field.show_type === 'date' && field.default_value === 'NOW()') {
           const today = this.formatDate(new Date());
           data.set(field.field_name, today);
-        }
-        // 如果是日期时间字段且默认值是 NOW()
-        else if (field.show_type === 'datetime' && field.default_value === 'NOW()') {
+        } else if (field.show_type === 'datetime' && field.default_value === 'NOW()') {
           const now = this.formatDateTime(new Date());
           data.set(field.field_name, now);
-        }
-        // 最后设置为空
-        else {
+        } else {
           data.set(field.field_name, '');
         }
       }
     });
 
     this.formData = data;
+    this.calculateAllFormulas();
 
     if (savedRecord) {
       console.log('✅ 已加载本地保存的数据');
@@ -182,11 +138,139 @@ struct FormPage {
   setFieldValue(fieldName: string, value: string) {
     this.formData.set(fieldName, value);
     console.log(`字段 ${fieldName} 更新:`, value);
+    this.calculateAllFormulas();
   }
 
   /**
-   * ✅ 格式化日期 (YYYY-MM-DD)
+   * ✅ 解析选项列表
    */
+  parseOptions(selectValue: string | undefined): OptionItem[] {
+    if (!selectValue || selectValue === '') {
+      return [];
+    }
+
+    const items: OptionItem[] = [];
+    const values = selectValue.split(',');
+
+    for (let i = 0; i < values.length; i++) {
+      const item = values[i].trim();
+      if (item === '') {
+        continue;
+      }
+
+      if (item.includes('=')) {
+        const parts = item.split('=');
+        items.push({
+          label: parts[0].trim(),
+          value: parts[1].trim()
+        });
+      } else {
+        items.push({
+          label: item,
+          value: item
+        });
+      }
+    }
+
+    return items;
+  }
+
+  /**
+   * ✅ 获取字段的选项列表（供 Builder 使用）
+   */
+  getFieldOptions(field: FormField): OptionItem[] {
+    return this.parseOptions(field.select_value);
+  }
+
+  /**
+   * ✅ 检查选项是否被选中（多选）
+   */
+  isOptionChecked(fieldName: string, optionValue: string): boolean {
+    const currentValue = this.getFieldValue(fieldName);
+    if (!currentValue) {
+      return false;
+    }
+    const selectedValues = currentValue.split(',').map(v => v.trim());
+    return selectedValues.includes(optionValue);
+  }
+
+  /**
+   * ✅ 切换多选选项
+   */
+  toggleCheckboxOption(fieldName: string, optionValue: string) {
+    const currentValue = this.getFieldValue(fieldName);
+    let selectedValues = currentValue ? currentValue.split(',').map(v => v.trim()).filter(v => v !== '') : [];
+
+    if (selectedValues.includes(optionValue)) {
+      // 移除
+      selectedValues = selectedValues.filter(v => v !== optionValue);
+    } else {
+      // 添加
+      selectedValues.push(optionValue);
+    }
+
+    this.setFieldValue(fieldName, selectedValues.join(','));
+  }
+
+  calculateAllFormulas() {
+    if (!this.currentTable || !this.currentTable.fields) {
+      return;
+    }
+
+    const formulaFields = this.currentTable.fields.filter(f =>
+    f.formula && f.formula.trim() !== ''
+    );
+
+    if (formulaFields.length === 0) {
+      return;
+    }
+
+    console.log('✅ 开始计算公式字段，共', formulaFields.length, '个');
+
+    formulaFields.forEach(field => {
+      try {
+        const result = this.calculateFormula(field.formula!);
+        this.formData.set(field.field_name, result.toString());
+        console.log(`公式计算: ${field.field_name} = ${result} (公式: ${field.formula})`);
+      } catch (err) {
+        const e = err as Error;
+        console.error(`计算公式失败: ${field.field_name}`, e.message);
+        this.formData.set(field.field_name, '0');
+      }
+    });
+  }
+
+  calculateFormula(formula: string): number {
+    let expression = formula;
+
+    if (!this.currentTable || !this.currentTable.fields) {
+      return 0;
+    }
+
+    this.currentTable.fields.forEach(field => {
+      const fieldName = field.field_name;
+      const fieldValue = this.getFieldValue(fieldName);
+      const numValue = parseFloat(fieldValue) || 0;
+      const regex = new RegExp(`\\b${fieldName}\\b`, 'g');
+      expression = expression.replace(regex, numValue.toString());
+    });
+
+    console.log('公式表达式:', formula, '→', expression);
+
+    try {
+      if (!/^[\d\s+\-*\/().]+$/.test(expression)) {
+        throw new Error('公式包含非法字符');
+      }
+
+      const result = new Function(`return ${expression}`)() as number;
+      return Math.round(result * 100) / 100;
+    } catch (err) {
+      const e = err as Error;
+      console.error('公式计算错误:', expression, e.message);
+      return 0;
+    }
+  }
+
   formatDate(date: Date): string {
     const year = date.getFullYear();
     const month = (date.getMonth() + 1).toString().padStart(2, '0');
@@ -194,9 +278,6 @@ struct FormPage {
     return `${year}-${month}-${day}`;
   }
 
-  /**
-   * ✅ 格式化日期时间 (YYYY-MM-DD HH:mm:ss)
-   */
   formatDateTime(date: Date): string {
     const year = date.getFullYear();
     const month = (date.getMonth() + 1).toString().padStart(2, '0');
@@ -207,19 +288,6 @@ struct FormPage {
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
   }
 
-  /**
-   * ✅ 格式化时间 (HH:mm:ss)
-   */
-  formatTime(date: Date): string {
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    const seconds = date.getSeconds().toString().padStart(2, '0');
-    return `${hours}:${minutes}:${seconds}`;
-  }
-
-  /**
-   * ✅ 解析日期字符串
-   */
   parseDate(dateStr: string): Date {
     if (!dateStr) {
       return new Date();
@@ -236,19 +304,6 @@ struct FormPage {
     return new Date();
   }
 
-  /**
-   * ✅ 解析选项列表（从 select_value 中解析，以逗号分隔）
-   */
-  parseOptions(selectValue: string | undefined): string[] {
-    if (!selectValue || selectValue === '') {
-      return [];
-    }
-    return selectValue.split(',').map(v => v.trim()).filter(v => v !== '');
-  }
-
-  /**
-   * ✅ 打开日期选择器
-   */
   openDatePicker(field: FormField) {
     console.log('打开日期选择器:', field.field_name);
 
@@ -274,18 +329,11 @@ struct FormPage {
     });
   }
 
-  /**
-   * ✅ 打开日期时间选择器
-   */
   openDateTimePicker(field: FormField) {
     console.log('打开日期时间选择器:', field.field_name);
-    // TODO: HarmonyOS 没有原生的 DateTimePicker，可以分步选择日期和时间
     this.toastController.show('日期时间选择功能开发中');
   }
 
-  /**
-   * ✅ 打开时间选择器
-   */
   openTimePicker(field: FormField) {
     console.log('打开时间选择器:', field.field_name);
 
@@ -316,99 +364,6 @@ struct FormPage {
     });
   }
 
-  /**
-   * ✅ 打开下拉选择框
-   */
-  openSelectDialog(field: FormField) {
-    console.log('打开下拉选择:', field.field_name);
-
-    this.currentSelectField = field;
-    this.selectOptions = this.parseOptions(field.select_value);
-
-    if (this.selectOptions.length === 0) {
-      this.toastController.show('暂无选项');
-      return;
-    }
-
-    // 查找当前选中的索引
-    const currentValue = this.getFieldValue(field.field_name);
-    this.selectedIndex = this.selectOptions.findIndex(opt => opt === currentValue);
-
-    this.showSelectDialog = true;
-  }
-
-  /**
-   * ✅ 选择下拉选项
-   */
-  selectOption(index: number) {
-    if (this.currentSelectField && index >= 0 && index < this.selectOptions.length) {
-      const value = this.selectOptions[index];
-      this.setFieldValue(this.currentSelectField.field_name, value);
-      console.log('选择:', value);
-    }
-    this.showSelectDialog = false;
-    this.currentSelectField = null;
-  }
-
-  /**
-   * ✅ 打开单选框
-   */
-  openRadioDialog(field: FormField) {
-    // 单选和下拉框逻辑相同
-    this.openSelectDialog(field);
-  }
-
-  /**
-   * ✅ 打开多选框
-   */
-  openCheckboxDialog(field: FormField) {
-    console.log('打开多选:', field.field_name);
-
-    this.currentCheckboxField = field;
-    this.checkboxOptions = this.parseOptions(field.select_value);
-
-    if (this.checkboxOptions.length === 0) {
-      this.toastController.show('暂无选项');
-      return;
-    }
-
-    // 解析当前选中的值（多个值用逗号分隔）
-    const currentValue = this.getFieldValue(field.field_name);
-    const selectedValues = currentValue ? currentValue.split(',').map(v => v.trim()) : [];
-
-    // 初始化选中状态
-    this.checkedItems = this.checkboxOptions.map(opt => selectedValues.includes(opt));
-
-    this.showCheckboxDialog = true;
-  }
-
-  /**
-   * ✅ 切换多选项
-   */
-  toggleCheckbox(index: number) {
-    if (index >= 0 && index < this.checkedItems.length) {
-      this.checkedItems[index] = !this.checkedItems[index];
-    }
-  }
-
-  /**
-   * ✅ 确认多选
-   */
-  confirmCheckbox() {
-    if (this.currentCheckboxField) {
-      // 获取所有选中的值
-      const selectedValues = this.checkboxOptions.filter((opt, index) => this.checkedItems[index]);
-      const value = selectedValues.join(',');
-      this.setFieldValue(this.currentCheckboxField.field_name, value);
-      console.log('多选值:', value);
-    }
-    this.showCheckboxDialog = false;
-    this.currentCheckboxField = null;
-  }
-
-  /**
-   * 表单验证
-   */
   validateForm(): boolean {
     if (!this.currentTable || !this.currentTable.fields) {
       return false;
@@ -428,8 +383,60 @@ struct FormPage {
   }
 
   /**
-   * 保存草稿
+   * ✅ 判断字段是否应该显示（根据 control_by 控制）
    */
+  isFieldVisible(field: FormField): boolean {
+    // 如果没有 control_by，直接显示
+    if (!field.control_by || field.control_by.trim() === '') {
+      return true;
+    }
+
+    // 解析 control_by，格式：field1.1,field1.3
+    const controls = field.control_by.split(',').map(v => v.trim());
+
+    for (let i = 0; i < controls.length; i++) {
+      const control = controls[i];
+      if (control === '') {
+        continue;
+      }
+
+      // 分割字段名和选项索引，如 "field1.1" -> ["field1", "1"]
+      const parts = control.split('.');
+      if (parts.length !== 2) {
+        continue;
+      }
+
+      const controlFieldName = parts[0];
+      const controlOptionIndex = parseInt(parts[1]);
+
+      // 获取控制字段的当前值
+      const controlFieldValue = this.getFieldValue(controlFieldName);
+      if (!controlFieldValue) {
+        continue;
+      }
+
+      // 获取控制字段的选项列表
+      const controlField = this.currentTable?.fields?.find(f => f.field_name === controlFieldName);
+      if (!controlField) {
+        continue;
+      }
+
+      const options = this.parseOptions(controlField.select_value);
+      if (controlOptionIndex < 1 || controlOptionIndex > options.length) {
+        continue;
+      }
+
+      // 检查当前值是否匹配指定的选项（索引从 1 开始）
+      const targetOption = options[controlOptionIndex - 1];
+      if (controlFieldValue === targetOption.value) {
+        return true;
+      }
+    }
+
+    // 如果没有任何控制条件满足，则不显示
+    return false;
+  }
+
   async handleSaveDraft() {
     console.log('保存草稿到本地...');
 
@@ -463,16 +470,14 @@ struct FormPage {
         this.toastController.show('❌ 保存失败');
       }
 
-    } catch (e) {
-      console.error('❌ 保存草稿失败:', e);
+    } catch (err) {
+      const e = err as Error;
+      console.error('❌ 保存草稿失败:', e.message);
       this.toastController.show('保存失败');
       this.saving = false;
     }
   }
 
-  /**
-   * 提交表单
-   */
   async handleSubmit() {
     console.log('准备提交表单...');
 
@@ -523,7 +528,6 @@ struct FormPage {
 
           console.log('提交数据:', JSON.stringify(submitData));
 
-          // TODO: 调用实际的提交接口
           await new Promise<void>(resolve => setTimeout(resolve, 1000));
 
           await storage.markRecordAsUploaded(
@@ -547,16 +551,14 @@ struct FormPage {
       this.submitting = false;
       this.scheduleBack(1500);
 
-    } catch (e) {
-      console.error('❌ 提交失败:', e);
+    } catch (err) {
+      const e = err as Error;
+      console.error('❌ 提交失败:', e.message);
       this.toastController.show('提交失败');
       this.submitting = false;
     }
   }
 
-  /**
-   * 获取可编辑字段列表
-   */
   getEditableFields(): FormField[] {
     if (!this.currentTable || !this.currentTable.fields) {
       return [];
@@ -628,6 +630,16 @@ struct FormPage {
               // 表单信息卡片
               Column() {
                 Row() {
+                  // ✅ 添加患者姓名
+                  Text('患者姓名')
+                    .fontSize(14)
+                    .fontColor('#999999')
+
+                  Text(this.currentTask?.name || '')
+                    .fontSize(14)
+                    .fontColor('#333333')
+                    .margin({ left: 12, right: 24 })
+
                   Text('患者编号')
                     .fontSize(14)
                     .fontColor('#999999')
@@ -713,154 +725,6 @@ struct FormPage {
       .width('100%')
       .height('100%')
 
-      // ✅ 下拉/单选选择对话框
-      if (this.showSelectDialog && this.currentSelectField) {
-        Column() {
-          Column() {
-            Text(this.currentSelectField.annotation)
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#333333')
-              .margin({ bottom: 16 })
-
-            List({ space: 0 }) {
-              ForEach(this.selectOptions, (option: string, index: number) => {
-                ListItem() {
-                  Row() {
-                    Text(option)
-                      .fontSize(16)
-                      .fontColor('#333333')
-                      .layoutWeight(1)
-
-                    if (index === this.selectedIndex) {
-                      Text('✓')
-                        .fontSize(18)
-                        .fontColor('#FF6B00')
-                    }
-                  }
-                  .width('100%')
-                  .height(48)
-                  .padding({ left: 16, right: 16 })
-                  .backgroundColor(index === this.selectedIndex ? '#FFF7F0' : '#FFFFFF')
-                  .onClick(() => {
-                    this.selectOption(index);
-                  })
-                }
-              }, (option: string, index: number) => `${this.currentSelectField?.field_name}_${index}`)
-            }
-            .width('100%')
-            .height('60%')
-            .divider({
-              strokeWidth: 0.5,
-              color: '#E5E5E5'
-            })
-
-            Button('取消')
-              .fontSize(16)
-              .fontColor('#666666')
-              .backgroundColor('#F5F5F5')
-              .width('100%')
-              .height(44)
-              .margin({ top: 16 })
-              .borderRadius(8)
-              .onClick(() => {
-                this.showSelectDialog = false;
-                this.currentSelectField = null;
-              })
-          }
-          .width('85%')
-          .padding(16)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(16)
-        }
-        .width('100%')
-        .height('100%')
-        .backgroundColor('rgba(0, 0, 0, 0.5)')
-        .justifyContent(FlexAlign.Center)
-        .onClick(() => {
-          this.showSelectDialog = false;
-          this.currentSelectField = null;
-        })
-      }
-
-      // ✅ 多选对话框
-      if (this.showCheckboxDialog && this.currentCheckboxField) {
-        Column() {
-          Column() {
-            Text(this.currentCheckboxField.annotation)
-              .fontSize(18)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#333333')
-              .margin({ bottom: 16 })
-
-            List({ space: 0 }) {
-              ForEach(this.checkboxOptions, (option: string, index: number) => {
-                ListItem() {
-                  Row() {
-                    Text(option)
-                      .fontSize(16)
-                      .fontColor('#333333')
-                      .layoutWeight(1)
-
-                    Checkbox()
-                      .select(this.checkedItems[index])
-                      .selectedColor('#FF6B00')
-                      .onChange((value: boolean) => {
-                        this.toggleCheckbox(index);
-                      })
-                  }
-                  .width('100%')
-                  .height(48)
-                  .padding({ left: 16, right: 16 })
-                }
-              }, (option: string, index: number) => `${this.currentCheckboxField?.field_name}_${index}`)
-            }
-            .width('100%')
-            .height('60%')
-            .divider({
-              strokeWidth: 0.5,
-              color: '#E5E5E5'
-            })
-
-            Row() {
-              Button('取消')
-                .fontSize(16)
-                .fontColor('#666666')
-                .backgroundColor('#F5F5F5')
-                .width('48%')
-                .height(44)
-                .borderRadius(8)
-                .onClick(() => {
-                  this.showCheckboxDialog = false;
-                  this.currentCheckboxField = null;
-                })
-
-              Button('确定')
-                .fontSize(16)
-                .fontColor('#FFFFFF')
-                .backgroundColor('#FF6B00')
-                .width('48%')
-                .height(44)
-                .borderRadius(8)
-                .onClick(() => {
-                  this.confirmCheckbox();
-                })
-            }
-            .width('100%')
-            .margin({ top: 16 })
-            .justifyContent(FlexAlign.SpaceBetween)
-          }
-          .width('85%')
-          .padding(16)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(16)
-        }
-        .width('100%')
-        .height('100%')
-        .backgroundColor('rgba(0, 0, 0, 0.5)')
-        .justifyContent(FlexAlign.Center)
-      }
-
       // Toast 组件
       CustomToast({ controller: this.toastController })
     }
@@ -868,9 +732,6 @@ struct FormPage {
     .height('100%')
   }
 
-  /**
-   * 表单字段渲染
-   */
   @Builder
   FormFields() {
     if (this.getEditableFields().length === 0) {
@@ -896,133 +757,154 @@ struct FormPage {
     }
   }
 
-  /**
-   * ✅ 单个表单字段（根据 show_type 渲染）
-   */
   @Builder
   FormFieldItem(field: FormField) {
-    // ✅ 描述类型：只显示文本，不需要输入
-    if (field.show_type === 'description') {
-      Column() {
-        Text(field.annotation)
-          .fontSize(14)
-          .fontColor('#666666')
-          .lineHeight(22)
-      }
-      .width('100%')
-      .padding(12)
-      .backgroundColor('#F0F9FF')
-      .borderRadius(8)
-      .alignItems(HorizontalAlign.Start)
-
-    }
-
-    // ✅ 分割线：只显示分割线
-    if (field.show_type === 'line') {
+    if (!this.isFieldVisible(field)) {
+      // 不显示该字段
+      Column().width(0).height(0)
+    } else if (field.show_type === 'description') {
+      Text(field.annotation)
+        .fontSize(14)
+        .fontColor('#666666')
+        .lineHeight(22)
+        .width('100%')
+    } else if (field.show_type === 'line') {
       Divider()
         .width('100%')
         .height(1)
         .color('#E5E5E5')
         .margin({ top: 8, bottom: 8 })
+    } else {
+      Column() {
+        // 字段标签
+        Row() {
+          if (field.required === 1) {
+            Text('* ')
+              .fontSize(14)
+              .fontColor('#FF0000')
+          }
 
-    }
-
-    // ✅ 其他可输入字段
-    Column() {
-      // 字段标签
-      Row() {
-        if (field.required === 1) {
-          Text('* ')
+          Text(field.annotation)
             .fontSize(14)
-            .fontColor('#FF0000')
-        }
+            .fontColor('#333333')
+            .fontWeight(FontWeight.Medium)
 
-        Text(field.annotation)
-          .fontSize(14)
-          .fontColor('#333333')
-          .fontWeight(FontWeight.Medium)
+          if (field.formula && field.formula.trim() !== '') {
+            Text(' 🧮')
+              .fontSize(12)
+              .margin({ left: 4 })
+          }
+        }
+        .width('100%')
+        .margin({ bottom: 8 })
+
+        // 根据 show_type 渲染不同类型的输入控件
+        if (field.show_type === 'input') {
+          this.InputField(field)
+        } else if (field.show_type === 'decimal') {
+          this.DecimalField(field)
+        } else if (field.show_type === 'inputUnit') {
+          this.InputUnitField(field)
+        } else if (field.show_type === 'text') {
+          this.TextAreaField(field)
+        } else if (field.show_type === 'date') {
+          this.DateField(field)
+        } else if (field.show_type === 'datetime') {
+          this.DateTimeField(field)
+        } else if (field.show_type === 'time') {
+          this.TimeField(field)
+        } else if (field.show_type === 'select') {
+          this.SelectFieldInline(field)
+        } else if (field.show_type === 'radio') {
+          this.RadioFieldInline(field)
+        } else if (field.show_type === 'checkbox') {
+          this.CheckboxFieldInline(field)
+        } else if (field.show_type === 'file' || field.show_type === 'fileOcr') {
+          this.FileField(field)
+        } else if (field.show_type === 'image' || field.show_type === 'imageDesc') {
+          this.ImageField(field)
+        } else {
+          this.InputField(field)
+        }
       }
       .width('100%')
-      .margin({ bottom: 8 })
-
-      // 根据 show_type 渲染不同类型的输入控件
-      if (field.show_type === 'input') {
-        this.InputField(field)
-      } else if (field.show_type === 'decimal') {
-        this.DecimalField(field)
-      } else if (field.show_type === 'inputUnit') {
-        this.InputUnitField(field)
-      } else if (field.show_type === 'text') {
-        this.TextAreaField(field)
-      } else if (field.show_type === 'date') {
-        this.DateField(field)
-      } else if (field.show_type === 'datetime') {
-        this.DateTimeField(field)
-      } else if (field.show_type === 'time') {
-        this.TimeField(field)
-      } else if (field.show_type === 'select') {
-        this.SelectField(field)
-      } else if (field.show_type === 'radio') {
-        this.RadioField(field)
-      } else if (field.show_type === 'checkbox') {
-        this.CheckboxField(field)
-      } else if (field.show_type === 'file' || field.show_type === 'fileOcr') {
-        this.FileField(field)
-      } else if (field.show_type === 'image' || field.show_type === 'imageDesc') {
-        this.ImageField(field)
-      } else {
-        // 默认使用文本框
-        this.InputField(field)
-      }
+      .alignItems(HorizontalAlign.Start)
     }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
   }
 
-  /**
-   * 普通文本框
-   */
   @Builder
   InputField(field: FormField) {
-    TextInput({
-      placeholder: field.hint || `请输入${field.annotation}`,
-      text: this.getFieldValue(field.field_name)
-    })
+    if (field.formula && field.formula.trim() !== '') {
+      Row() {
+        Text(this.getFieldValue(field.field_name) || '0')
+          .fontSize(14)
+          .fontColor('#333333')
+          .layoutWeight(1)
+
+        Text('(自动计算)')
+          .fontSize(12)
+          .fontColor('#999999')
+      }
       .width('100%')
       .height(44)
-      .fontSize(14)
-      .backgroundColor('#FFFFFF')
+      .padding({ left: 12, right: 12 })
+      .backgroundColor('#F5F5F5')
       .borderRadius(8)
       .border({ width: 1, color: '#E5E5E5' })
-      .onChange((value: string) => {
-        this.setFieldValue(field.field_name, value);
+    } else {
+      TextInput({
+        placeholder: field.hint || `请输入${field.annotation}`,
+        text: this.getFieldValue(field.field_name)
       })
+        .width('100%')
+        .height(44)
+        .fontSize(14)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(8)
+        .border({ width: 1, color: '#E5E5E5' })
+        .onChange((value: string) => {
+          this.setFieldValue(field.field_name, value);
+        })
+    }
   }
 
-  /**
-   * ✅ 数值输入框
-   */
   @Builder
   DecimalField(field: FormField) {
-    TextInput({
-      placeholder: field.hint || `请输入${field.annotation}`,
-      text: this.getFieldValue(field.field_name)
-    })
+    if (field.formula && field.formula.trim() !== '') {
+      Row() {
+        Text(this.getFieldValue(field.field_name) || '0')
+          .fontSize(14)
+          .fontColor('#333333')
+          .layoutWeight(1)
+
+        Text('(自动计算)')
+          .fontSize(12)
+          .fontColor('#999999')
+      }
       .width('100%')
       .height(44)
-      .fontSize(14)
-      .type(InputType.Number)  // ✅ 数字键盘
-      .backgroundColor('#FFFFFF')
+      .padding({ left: 12, right: 12 })
+      .backgroundColor('#F5F5F5')
       .borderRadius(8)
       .border({ width: 1, color: '#E5E5E5' })
-      .onChange((value: string) => {
-        this.setFieldValue(field.field_name, value);
+    } else {
+      TextInput({
+        placeholder: field.hint || `请输入${field.annotation}`,
+        text: this.getFieldValue(field.field_name)
       })
+        .width('100%')
+        .height(44)
+        .fontSize(14)
+        .type(InputType.Number)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(8)
+        .border({ width: 1, color: '#E5E5E5' })
+        .onChange((value: string) => {
+          this.setFieldValue(field.field_name, value);
+        })
+    }
   }
 
-  /**
-   * 带单位的输入框
-   */
   @Builder
   InputUnitField(field: FormField) {
     Row() {
@@ -1050,9 +932,6 @@ struct FormPage {
     .width('100%')
   }
 
-  /**
-   * ✅ 大文本框
-   */
   @Builder
   TextAreaField(field: FormField) {
     TextArea({
@@ -1070,9 +949,6 @@ struct FormPage {
       })
   }
 
-  /**
-   * ✅ 日期选择
-   */
   @Builder
   DateField(field: FormField) {
     Row() {
@@ -1095,9 +971,6 @@ struct FormPage {
     })
   }
 
-  /**
-   * ✅ 日期时间选择
-   */
   @Builder
   DateTimeField(field: FormField) {
     Row() {
@@ -1120,9 +993,6 @@ struct FormPage {
     })
   }
 
-  /**
-   * ✅ 时间选择
-   */
   @Builder
   TimeField(field: FormField) {
     Row() {
@@ -1145,89 +1015,70 @@ struct FormPage {
     })
   }
 
-  /**
-   * ✅ 下拉选择框
-   */
   @Builder
-  SelectField(field: FormField) {
-    Row() {
-      Text(this.getFieldValue(field.field_name) || `请选择${field.annotation}`)
-        .fontSize(14)
-        .fontColor(this.getFieldValue(field.field_name) ? '#333333' : '#CCCCCC')
-        .layoutWeight(1)
+  SelectFieldInline(field: FormField) {
+    // ✅ 修改这里：Column 改为 Flex，设置 wrap
+    Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+      ForEach(this.getFieldOptions(field), (option: OptionItem, index: number) => {
+        Row() {
+          Radio({ value: option.value, group: field.field_name })
+            .checked(this.getFieldValue(field.field_name) === option.value)
+            .onChange((isChecked: boolean) => {
+              if (isChecked) {
+                this.setFieldValue(field.field_name, option.value);
+              }
+            })
 
-      Text('▼')
-        .fontSize(12)
-        .fontColor('#999999')
+          Text(option.label)
+            .fontSize(14)
+            .fontColor('#333333')
+            .margin({ left: 8 })
+            .onClick(() => {
+              this.setFieldValue(field.field_name, option.value);
+            })
+        }
+        .height(36)
+        .padding({ left: 4, right: 12 })  // ✅ 添加右边距
+        .margin({ right: 8, bottom: 8 })   // ✅ 添加间距
+      }, (option: OptionItem, index: number) => `${field.field_name}_radio_${index}`)
     }
     .width('100%')
-    .height(44)
-    .padding({ left: 12, right: 12 })
-    .backgroundColor('#FFFFFF')
-    .borderRadius(8)
-    .border({ width: 1, color: '#E5E5E5' })
-    .onClick(() => {
-      this.openSelectDialog(field);
-    })
   }
 
-  /**
-   * ✅ 单选框
-   */
   @Builder
-  RadioField(field: FormField) {
-    Row() {
-      Text(this.getFieldValue(field.field_name) || `请选择${field.annotation}`)
-        .fontSize(14)
-        .fontColor(this.getFieldValue(field.field_name) ? '#333333' : '#CCCCCC')
-        .layoutWeight(1)
+  RadioFieldInline(field: FormField) {
+    this.SelectFieldInline(field);
+  }
 
-      Text('◉')
-        .fontSize(12)
-        .fontColor('#999999')
+  @Builder
+  CheckboxFieldInline(field: FormField) {
+    // ✅ 修改这里：Column 改为 Flex，设置 wrap
+    Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+      ForEach(this.getFieldOptions(field), (option: OptionItem, index: number) => {
+        Row() {
+          Checkbox()
+            .select(this.isOptionChecked(field.field_name, option.value))
+            .selectedColor('#FF6B00')
+            .onChange((isChecked: boolean) => {
+              this.toggleCheckboxOption(field.field_name, option.value);
+            })
+
+          Text(option.label)
+            .fontSize(14)
+            .fontColor('#333333')
+            .margin({ left: 8 })
+            .onClick(() => {
+              this.toggleCheckboxOption(field.field_name, option.value);
+            })
+        }
+        .height(36)
+        .padding({ left: 4, right: 12 })  // ✅ 添加右边距
+        .margin({ right: 8, bottom: 8 })   // ✅ 添加间距
+      }, (option: OptionItem, index: number) => `${field.field_name}_checkbox_${index}`)
     }
     .width('100%')
-    .height(44)
-    .padding({ left: 12, right: 12 })
-    .backgroundColor('#FFFFFF')
-    .borderRadius(8)
-    .border({ width: 1, color: '#E5E5E5' })
-    .onClick(() => {
-      this.openRadioDialog(field);
-    })
   }
 
-  /**
-   * ✅ 多选框
-   */
-  @Builder
-  CheckboxField(field: FormField) {
-    Row() {
-      Text(this.getFieldValue(field.field_name) || `请选择${field.annotation}`)
-        .fontSize(14)
-        .fontColor(this.getFieldValue(field.field_name) ? '#333333' : '#CCCCCC')
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-      Text('☑')
-        .fontSize(12)
-        .fontColor('#999999')
-    }
-    .width('100%')
-    .height(44)
-    .padding({ left: 12, right: 12 })
-    .backgroundColor('#FFFFFF')
-    .borderRadius(8)
-    .border({ width: 1, color: '#E5E5E5' })
-    .onClick(() => {
-      this.openCheckboxDialog(field);
-    })
-  }
-
-  /**
-   * ✅ 文件上传
-   */
   @Builder
   FileField(field: FormField) {
     Row() {
@@ -1250,9 +1101,6 @@ struct FormPage {
     })
   }
 
-  /**
-   * ✅ 图片上传
-   */
   @Builder
   ImageField(field: FormField) {
     Row() {
