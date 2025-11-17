@@ -13,7 +13,7 @@ import router from '@ohos.router';
 import { FollowUpTask, FormTable, FormField } from '../types';
 import { CustomToast, ToastController } from '../components/CustomToast';
 import storage from '../utils/storage';
-
+import { SignatureCanvas } from '../components/SignatureCanvas';
 /**
  * 任务统计信息接口
  */
@@ -663,24 +663,40 @@ struct MissionPage {
 
       // 内容区
       if (this.hasConsent()) {
-        // ✅ 已签署 - 显示签名图片
+        // ✅ 已签署 - 使用 Canvas 显示签名
         Column() {
           Text('患者签名')
             .fontSize(12)
             .fontColor('#999999')
             .margin({ bottom: 8 })
+            .alignSelf(ItemAlign.Start)
 
-          // 签名图片
-          Image(this.currentTask!.consent_signature!.signature_image)
+          // ✅ 使用 Canvas 组件显示签名
+          if (this.currentTask!.consent_signature!.signature_paths) {
+            SignatureCanvas({
+              pathsJson: this.currentTask!.consent_signature!.signature_paths
+            })
+          } else {
+            // 兜底：显示提示（适用于旧数据）
+            Column() {
+              Text('⚠️')
+                .fontSize(32)
+                .margin({ bottom: 4 })
+
+              Text('签名数据不完整')
+                .fontSize(12)
+                .fontColor('#999999')
+            }
             .width('100%')
             .height(120)
-            .objectFit(ImageFit.Contain)
+            .justifyContent(FlexAlign.Center)
             .backgroundColor('#FAFAFA')
             .borderRadius(8)
             .border({
               width: 1,
               color: '#E5E5E5'
             })
+          }
 
           Row() {
             Text(`签署时间：${this.currentTask!.consent_signature!.signature_time}`)

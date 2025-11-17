@@ -1,4 +1,3 @@
-
 /**
  * 本地存储工具
  */
@@ -17,6 +16,9 @@ export class StorageKeys {
   static readonly FOLLOW_UP_TASKS = 'followUpTasks';      // 随访任务列表
   static readonly FOLLOW_UP_RECORDS = 'followUpRecords';  // 随访记录
   static readonly LAST_SYNC_TIME = 'lastSyncTime';        // 最后同步时间
+
+  // ✅ 全局配置
+  static readonly SERVER_URL = 'serverUrl';               // 服务器地址（全局）
 }
 
 /**
@@ -143,6 +145,41 @@ class Storage {
   async removeUserData(username: string, key: string): Promise<void> {
     const userKey = `${username}_${key}`;
     await this.remove(userKey);
+  }
+
+  // ============================================
+  // ✅ 全局配置方法（服务器地址）
+  // ============================================
+
+  /**
+   * ✅ 获取服务器地址（全局，所有用户共享）
+   */
+  async getServerUrl(): Promise<string> {
+    try {
+      const url = await this.get(StorageKeys.SERVER_URL);
+      // 如果没有配置，返回默认值
+      if (!url || url === '') {
+        return 'http://192.168.48.87:8080/Xbiosms_war_exploded';
+      }
+      console.log('✅ 读取服务器地址（全局）:', url);
+      return url;
+    } catch (e) {
+      console.error('❌ 获取服务器地址失败:', e);
+      return 'http://192.168.48.87:8080/Xbiosms_war_exploded';
+    }
+  }
+
+  /**
+   * ✅ 设置服务器地址（全局，所有用户共享）
+   */
+  async setServerUrl(url: string): Promise<void> {
+    try {
+      await this.set(StorageKeys.SERVER_URL, url);
+      console.log('✅ 服务器地址已保存（全局）:', url);
+    } catch (e) {
+      console.error('❌ 保存服务器地址失败:', e);
+      //throw e;
+    }
   }
 
   // ============================================
@@ -315,9 +352,6 @@ class Storage {
     return false;
   }
 
-  /**
-   * 删除任务的表单记录
-   */
   /**
    * ✅ 删除表单记录
    */

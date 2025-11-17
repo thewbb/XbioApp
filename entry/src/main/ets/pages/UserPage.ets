@@ -1,6 +1,5 @@
-
 /**
- * 用户登录页面 - 支持离线登录
+ * 用户登录页面 - 支持离线登录 + 服务器配置
  */
 import promptAction from '@ohos.promptAction';
 import router from '@ohos.router';
@@ -23,14 +22,33 @@ struct UserPage {
   @State keepLogin: boolean = false;
   @State loading: boolean = false;
 
+  // ✅ 服务器配置相关状态
+  @State showServerDialog: boolean = false;
+  @State serverUrl: string = '';
+  @State tempServerUrl: string = '';
+
   async aboutToAppear() {
     console.log('UserPage 页面加载...');
     try {
       await storage.init();
+      await http.init();  // ✅ 初始化 HTTP 工具
       await this.loadLastUsername();
+      await this.loadServerUrl();  // ✅ 加载服务器地址
       console.log('UserPage 页面加载完成');
     } catch (e) {
       console.error('UserPage 初始化失败:', e);
+    }
+  }
+
+  /**
+   * ✅ 加载服务器地址
+   */
+  async loadServerUrl() {
+    try {
+      this.serverUrl = await storage.getServerUrl();
+      console.log('当前服务器地址:', this.serverUrl);
+    } catch (e) {
+      console.error('加载服务器地址失败:', e);
     }
   }
 
@@ -66,6 +84,41 @@ struct UserPage {
       });
     } catch (e) {
       console.error('显示 Toast 失败:', e);
+    }
+  }
+
+  /**
+   * ✅ 打开服务器配置对话框
+   */
+  openServerConfig() {
+    this.tempServerUrl = this.serverUrl;
+    this.showServerDialog = true;
+  }
+
+  /**
+   * ✅ 保存服务器配置
+   */
+  async saveServerConfig() {
+    if (!this.tempServerUrl) {
+      this.showMessage('请输入服务器地址');
+      return;
+    }
+
+    // 验证 URL 格式（简单验证）
+    if (!this.tempServerUrl.startsWith('http://') && !this.tempServerUrl.startsWith('https://')) {
+      this.showMessage('请输入完整的服务器地址（以 http:// 或 https:// 开头）');
+      return;
+    }
+
+    try {
+      await http.setBaseUrl(this.tempServerUrl);
+      this.serverUrl = this.tempServerUrl;
+      this.showServerDialog = false;
+      this.showMessage('服务器地址已保存');
+      console.log('✅ 服务器地址已更新:', this.serverUrl);
+    } catch (e) {
+      console.error('❌ 保存服务器地址失败:', e);
+      this.showMessage('保存失败');
     }
   }
 
@@ -108,7 +161,7 @@ struct UserPage {
           // 保存到本地用户列表
           await this.saveToLocalUsers(passwordMd5, loginResponse.token, loginResponse.userInfo);
 
-          // ✅ 关键：必须先设置当前用户
+          // 设置当前用户
           await this.setCurrentUser();
 
           console.log('在线登录成功');
@@ -147,8 +200,6 @@ struct UserPage {
       }
 
       console.log('找到本地用户，验证密码...');
-      console.log('存储的密码 MD5:', localUser.passwordMd5);
-      console.log('输入的密码 MD5:', passwordMd5);
 
       if (localUser.passwordMd5 === passwordMd5) {
         // 更新登录时间和保持登录状态
@@ -158,7 +209,7 @@ struct UserPage {
         localUsers.set(this.username, localUser);
         await storage.set(StorageKeys.LOCAL_USERS, localUsers.toJSON());
 
-        // ✅ 关键：必须设置当前用户
+        // 设置当前用户
         await this.setCurrentUser();
 
         console.log('离线登录成功');
@@ -204,13 +255,13 @@ struct UserPage {
   }
 
   /**
-   * ✅ 设置当前用户（关键方法）
+   * 设置当前用户
    */
   async setCurrentUser(): Promise<void> {
     try {
       const currentUser: CurrentUser = {
         username: this.username,
-        keepLogin: this.keepLogin,  // ✅ 使用用户选择的值
+        keepLogin: this.keepLogin,
         lastLoginTime: Date.now()
       };
 
@@ -218,7 +269,6 @@ struct UserPage {
       console.log('✅ 设置当前用户成功:', JSON.stringify(currentUser));
     } catch (e) {
       console.error('❌ 设置当前用户失败:', e);
-      //throw e;
     }
   }
 
@@ -324,7 +374,6 @@ struct UserPage {
     const that = this;
     this.loading = true;
 
-    // 延迟执行，确保 UI 更新
     setTimeout(() => {
       that.doLogin().then((result: LoginResult) => {
         console.log('登录结果:', JSON.stringify(result));
@@ -333,7 +382,6 @@ struct UserPage {
         if (result.success) {
           console.log('✅ 登录成功，准备跳转...');
 
-          // ✅ 延迟跳转，确保 CURRENT_USER 已保存
           setTimeout(() => {
             that.navigateToIndex();
           }, 200);
@@ -352,108 +400,227 @@ struct UserPage {
   }
 
   build() {
-    Column() {
+    Stack() {
       Column() {
-        Text('🏥')
-          .fontSize(80)
-          .margin({ bottom: 20 })
+        Column() {
+          Text('🏥')
+            .fontSize(80)
+            .margin({ bottom: 20 })
 
-        Text('随访系统')
-          .fontSize(28)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#333333')
-          .margin({ bottom: 8 })
+          Text('随访系统')
+            .fontSize(28)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#333333')
+            .margin({ bottom: 8 })
 
-        Text('Follow-Up System')
-          .fontSize(14)
-          .fontColor('#999999')
-      }
-      .width('100%')
-      .padding({ top: 60, bottom: 40 })
-
-      Column({ space: 20 }) {
-        Column({ space: 8 }) {
-          Text('用户名')
+          Text('Follow-Up System')
             .fontSize(14)
-            .fontColor('#666666')
-            .width('100%')
-
-          TextInput({ placeholder: '请输入用户名', text: this.username })
-            .width('100%')
-            .height(48)
-            .fontSize(16)
-            .backgroundColor('#F5F5F5')
-            .borderRadius(8)
-            .onChange((value: string) => {
-              this.username = value;
-            })
-        }
-        .alignItems(HorizontalAlign.Start)
-
-        Column({ space: 8 }) {
-          Text('密码')
-            .fontSize(14)
-            .fontColor('#666666')
-            .width('100%')
-
-          TextInput({ placeholder: '请输入密码', text: this.password })
-            .width('100%')
-            .height(48)
-            .fontSize(16)
-            .type(InputType.Password)
-            .backgroundColor('#F5F5F5')
-            .borderRadius(8)
-            .onChange((value: string) => {
-              this.password = value;
-            })
-        }
-        .alignItems(HorizontalAlign.Start)
-
-        Row() {
-          Checkbox({ name: 'keepLogin' })
-            .select(this.keepLogin)
-            .onChange((value: boolean) => {
-              this.keepLogin = value;
-              console.log('保持登录状态改变:', value);
-            })
-
-          Text('保持登录（离线可用）')
-            .fontSize(14)
-            .fontColor('#666666')
-            .margin({ left: 8 })
+            .fontColor('#999999')
         }
         .width('100%')
+        .padding({ top: 60, bottom: 40 })
 
-        Button(this.loading ? '登录中...' : '登录')
+        Column({ space: 20 }) {
+          Column({ space: 8 }) {
+            Text('用户名')
+              .fontSize(14)
+              .fontColor('#666666')
+              .width('100%')
+
+            TextInput({ placeholder: '请输入用户名', text: this.username })
+              .width('100%')
+              .height(48)
+              .fontSize(16)
+              .backgroundColor('#F5F5F5')
+              .borderRadius(8)
+              .onChange((value: string) => {
+                this.username = value;
+              })
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Column({ space: 8 }) {
+            Text('密码')
+              .fontSize(14)
+              .fontColor('#666666')
+              .width('100%')
+
+            TextInput({ placeholder: '请输入密码', text: this.password })
+              .width('100%')
+              .height(48)
+              .fontSize(16)
+              .type(InputType.Password)
+              .backgroundColor('#F5F5F5')
+              .borderRadius(8)
+              .onChange((value: string) => {
+                this.password = value;
+              })
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Row() {
+            Checkbox({ name: 'keepLogin' })
+              .select(this.keepLogin)
+              .onChange((value: boolean) => {
+                this.keepLogin = value;
+                console.log('保持登录状态改变:', value);
+              })
+
+            Text('保持登录（离线可用）')
+              .fontSize(14)
+              .fontColor('#666666')
+              .margin({ left: 8 })
+          }
           .width('100%')
-          .height(48)
-          .fontSize(16)
-          .fontColor('#FFFFFF')
-          .backgroundColor(this.loading ? '#CCCCCC' : '#FF6B00')
-          .borderRadius(8)
-          .enabled(!this.loading)
-          .onClick(() => {
-            this.handleLogin();
-          })
+
+          Button(this.loading ? '登录中...' : '登录')
+            .width('100%')
+            .height(48)
+            .fontSize(16)
+            .fontColor('#FFFFFF')
+            .backgroundColor(this.loading ? '#CCCCCC' : '#FF6B00')
+            .borderRadius(8)
+            .enabled(!this.loading)
+            .onClick(() => {
+              this.handleLogin();
+            })
+
+          // ✅ 服务器配置按钮
+          Button('⚙️ 服务器配置')
+            .width('100%')
+            .height(40)
+            .fontSize(14)
+            .fontColor('#666666')
+            .backgroundColor('#F5F5F5')
+            .borderRadius(8)
+            .onClick(() => {
+              this.openServerConfig();
+            })
+        }
+        .width('100%')
+        .padding({ left: 30, right: 30 })
+
+        Blank()
+
+        Column({ space: 8 }) {
+          Text('💡 离线模式说明')
+            .fontSize(12)
+            .fontColor('#999999')
+
+          Text('勾选"保持登录"后，下次启动可离线使用')
+            .fontSize(12)
+            .fontColor('#999999')
+
+          // ✅ 显示当前服务器地址
+          if (this.serverUrl) {
+            Text(`📡 服务器：${this.serverUrl}`)
+              .fontSize(11)
+              .fontColor('#CCCCCC')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+        }
+        .padding({ bottom: 30 })
       }
       .width('100%')
-      .padding({ left: 30, right: 30 })
+      .height('100%')
+      .backgroundColor('#FFFFFF')
 
-      Blank()
+      // ✅ 服务器配置对话框
+      if (this.showServerDialog) {
+        Column() {
+          Column() {
+            // 标题
+            Row() {
+              Text('服务器配置')
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .fontColor('#333333')
 
-      Column({ space: 8 }) {
-        Text('💡 离线模式说明')
-          .fontSize(12)
-          .fontColor('#999999')
+              Blank()
 
-        Text('勾选"保持登录"后，下次启动可离线使用')
-          .fontSize(12)
-          .fontColor('#999999')
+              Text('✕')
+                .fontSize(24)
+                .fontColor('#999999')
+                .onClick(() => {
+                  this.showServerDialog = false;
+                })
+            }
+            .width('100%')
+            .margin({ bottom: 20 })
+
+            // 输入框
+            Column({ space: 8 }) {
+              Text('服务器地址')
+                .fontSize(14)
+                .fontColor('#666666')
+                .width('100%')
+
+              TextInput({
+                placeholder: 'http://192.168.1.100:8080/xxx',
+                text: this.tempServerUrl
+              })
+                .width('100%')
+                .height(48)
+                .fontSize(14)
+                .backgroundColor('#F5F5F5')
+                .borderRadius(8)
+                .onChange((value: string) => {
+                  this.tempServerUrl = value;
+                })
+
+              Text('示例：http://192.168.48.87:8080/Xbiosms_war_exploded')
+                .fontSize(12)
+                .fontColor('#999999')
+                .width('100%')
+            }
+            .alignItems(HorizontalAlign.Start)
+            .margin({ bottom: 20 })
+
+            // 按钮
+            Row({ space: 12 }) {
+              Button('取消')
+                .layoutWeight(1)
+                .height(44)
+                .fontSize(15)
+                .fontColor('#666666')
+                .backgroundColor('#F5F5F5')
+                .borderRadius(8)
+                .onClick(() => {
+                  this.showServerDialog = false;
+                })
+
+              Button('保存')
+                .layoutWeight(1)
+                .height(44)
+                .fontSize(15)
+                .fontColor('#FFFFFF')
+                .backgroundColor('#FF6B00')
+                .borderRadius(8)
+                .onClick(() => {
+                  this.saveServerConfig();
+                })
+            }
+            .width('100%')
+          }
+          .width('85%')
+          .padding(20)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(16)
+          .shadow({
+            radius: 20,
+            color: '#00000030',
+            offsetX: 0,
+            offsetY: 4
+          })
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor('rgba(0, 0, 0, 0.5)')
       }
-      .padding({ bottom: 30 })
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#FFFFFF')
   }
 }

@@ -274,6 +274,7 @@ export interface ConsentSignature {
   signature_time: string;        // 签名时间
   patient_name: string;          // 患者姓名
   patient_no: string;            // 患者编号
+  signature_paths?: string;      // ✅ 新增：签名路径数据
 }
 
 

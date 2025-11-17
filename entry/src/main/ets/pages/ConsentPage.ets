@@ -1,5 +1,5 @@
 /**
- * 知情同意书签署页面 - 修复触摸冲突
+ * 知情同意书签署页面 - 完整修复版
  */
 import router from '@ohos.router';
 import { FollowUpTask, ConsentSignature } from '../types';
@@ -26,9 +26,8 @@ struct ConsentPage {
   @State toastController: ToastController = new ToastController();
   @State isSigning: boolean = false;
 
-  // 画布相关
-  private canvasContext: CanvasRenderingContext2D | null = null;
-  private settings: RenderingContextSettings = new RenderingContextSettings(true);
+  // ✅ 画布相关 - 修改初始化方式
+  private canvasContext: CanvasRenderingContext2D = new CanvasRenderingContext2D(new RenderingContextSettings(true));
   private isDrawing: boolean = false;
   @State hasSignature: boolean = false;
 
@@ -55,6 +54,7 @@ struct ConsentPage {
 
     console.log('任务ID:', this.currentTask?.id);
     console.log('患者:', this.currentTask?.name);
+    console.log('用户名:', this.currentUsername);
   }
 
   /**
@@ -62,30 +62,25 @@ struct ConsentPage {
    */
   onCanvasReady() {
     console.log('========== Canvas 准备完成 ==========');
-    if (this.canvasContext) {
-      // 设置画笔样式
-      this.canvasContext.strokeStyle = '#000000';
-      this.canvasContext.lineWidth = 4;
-      this.canvasContext.lineCap = 'round';
-      this.canvasContext.lineJoin = 'round';
 
-      // 填充白色背景
-      this.canvasContext.fillStyle = '#FFFFFF';
-      this.canvasContext.fillRect(0, 0, 2000, 2000);
+    // 设置画笔样式
+    this.canvasContext.strokeStyle = '#000000';
+    this.canvasContext.lineWidth = 4;
+    this.canvasContext.lineCap = 'round';
+    this.canvasContext.lineJoin = 'round';
 
-      console.log('Canvas 配置完成');
-    }
+    // 填充白色背景
+    this.canvasContext.fillStyle = '#FFFFFF';
+    this.canvasContext.fillRect(0, 0, 2000, 2000);
+
+    console.log('Canvas 配置完成');
+    console.log('Canvas 尺寸:', this.canvasWidth, 'x', this.canvasHeight);
   }
 
   /**
    * ✅ 开始绘制
    */
   onTouchStart(event: TouchEvent) {
-    if (!this.canvasContext) {
-      console.log('⚠️ canvasContext 未初始化');
-      return;
-    }
-
     const touch = event.touches[0];
     const x = touch.x;
     const y = touch.y;
@@ -104,15 +99,22 @@ struct ConsentPage {
 
     // 绘制一个小圆点（确保起点可见）
     this.canvasContext.fillStyle = '#000000';
+    this.canvasContext.beginPath();
     this.canvasContext.arc(x, y, 2, 0, 2 * Math.PI);
     this.canvasContext.fill();
+
+    // 重新设置描边样式
+    this.canvasContext.strokeStyle = '#000000';
+    this.canvasContext.lineWidth = 4;
+    this.canvasContext.beginPath();
+    this.canvasContext.moveTo(x, y);
   }
 
   /**
    * ✅ 绘制中
    */
   onTouchMove(event: TouchEvent) {
-    if (!this.canvasContext || !this.isDrawing || !this.currentPath) {
+    if (!this.isDrawing || !this.currentPath) {
       return;
     }
 
@@ -148,8 +150,6 @@ struct ConsentPage {
    * ✅ 清除签名
    */
   handleClear() {
-    if (!this.canvasContext) return;
-
     console.log('清除签名');
 
     // 清除画布
@@ -158,6 +158,10 @@ struct ConsentPage {
     // 重新填充白色背景
     this.canvasContext.fillStyle = '#FFFFFF';
     this.canvasContext.fillRect(0, 0, 2000, 2000);
+
+    // 重置画笔样式
+    this.canvasContext.strokeStyle = '#000000';
+    this.canvasContext.lineWidth = 4;
 
     // 清除路径数据
     this.drawPaths = [];
@@ -172,7 +176,7 @@ struct ConsentPage {
    */
   pathsToSvg(): string {
     const width = this.canvasWidth || 800;
-    const height = this.canvasHeight || 400;
+    const height = this.canvasHeight || 180;
 
     let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`;
     svg += `<rect width="${width}" height="${height}" fill="white"/>`;
@@ -212,10 +216,15 @@ struct ConsentPage {
   }
 
   /**
-   * ✅ 保存签名
+   * ✅ 保存签名 - 使用正确的 storage 方法
+   */
+  /**
+   * ✅ 保存签名 - 使用 URL 编码（推荐方案）
    */
   async handleSave() {
-    if (!this.hasSignature) {
+    console.log('========== 开始保存签名 ==========');
+
+    if (!this.hasSignature || this.drawPaths.length === 0) {
       this.toastController.show('请先签名');
       return;
     }
@@ -225,38 +234,36 @@ struct ConsentPage {
       return;
     }
 
-    if (this.drawPaths.length === 0) {
-      this.toastController.show('请先签名');
-      return;
-    }
-
     try {
       this.isSigning = true;
 
-      console.log('========== 保存签名 ==========');
-      console.log('路径数量:', this.drawPaths.length);
-
-      // 将路径转换为 SVG
+      // 生成 SVG
       const svgData = this.pathsToSvg();
       console.log('SVG 数据长度:', svgData.length);
 
-      // ✅ 使用 HarmonyOS 的 Base64 编码
-      const base64Svg = this.stringToBase64(svgData);
-      console.log('Base64 编码长度:', base64Svg.length);
+      // 使用 URL 编码
+      const encodedSvg = encodeURIComponent(svgData);
+      const signatureImage = 'data:image/svg+xml;charset=utf-8,' + encodedSvg;
 
-      if (!base64Svg) {
-        throw new Error('Base64 编码失败');
-      }
+      // ✅ 保存路径数据（用于 Canvas 重绘）
+      const pathsData = JSON.stringify({
+        paths: this.drawPaths,
+        canvasWidth: this.canvasWidth || 800,
+        canvasHeight: this.canvasHeight || 180
+      });
+
+      console.log('签名图片数据长度:', signatureImage.length);
+      console.log('路径数据长度:', pathsData.length);
+      console.log('路径数量:', this.drawPaths.length);
 
       // 创建签名记录
       const signature: ConsentSignature = {
-        signature_image: 'data:image/svg+xml;base64,' + base64Svg,
+        signature_image: signatureImage,
         signature_time: this.getCurrentTime(),
         patient_name: this.currentTask.name,
-        patient_no: this.currentTask.patient_no
+        patient_no: this.currentTask.patient_no,
+        signature_paths: pathsData  // ✅ 保存路径数据
       };
-
-      console.log('签名数据创建成功');
 
       // 保存到任务
       this.currentTask.consent_signature = signature;
@@ -268,17 +275,24 @@ struct ConsentPage {
       if (taskIndex !== -1) {
         tasks[taskIndex].consent_signature = signature;
         await storage.saveFollowUpTasks(this.currentUsername, tasks);
-        console.log('✅ 签名已保存到本地');
+        console.log('✅ 签名已保存（包含路径数据）');
+      } else {
+        throw new Error('未找到对应任务');
       }
 
       this.toastController.show('签署成功');
 
+      // 延迟返回
       setTimeout(() => {
-        router.back();
+        try {
+          router.back();
+        } catch (e) {
+          console.error('返回失败:', e);
+        }
       }, 500);
 
     } catch (e) {
-      console.error('❌ 保存签名失败:', e);
+      console.error('❌ 保存失败:', e);
       this.toastController.show('保存失败');
     } finally {
       this.isSigning = false;
@@ -338,7 +352,7 @@ struct ConsentPage {
           color: '#E5E5E5'
         })
 
-        // ✅ 可滚动内容区域
+        // 可滚动内容区域
         Scroll() {
           Column() {
             // 知情同意书内容
@@ -440,7 +454,7 @@ struct ConsentPage {
               .margin({ bottom: 8 })
               .alignSelf(ItemAlign.Start)
 
-            // Canvas 画布
+            // ✅ Canvas 画布
             Canvas(this.canvasContext)
               .width('100%')
               .height(180)
@@ -452,24 +466,27 @@ struct ConsentPage {
               })
               .borderRadius(8)
               .onReady(() => {
-                console.log('Canvas onReady 触发');
-                this.canvasContext = new CanvasRenderingContext2D(this.settings);
+                console.log('✅ Canvas onReady 触发');
                 this.onCanvasReady();
               })
               .onAreaChange((oldValue: Area, newValue: Area) => {
                 this.canvasWidth = Number(newValue.width);
                 this.canvasHeight = Number(newValue.height);
-                console.log('Canvas 尺寸:', this.canvasWidth, 'x', this.canvasHeight);
+                console.log('Canvas 尺寸变化:', this.canvasWidth, 'x', this.canvasHeight);
               })
               .onTouch((event: TouchEvent) => {
-                console.log('Touch 事件:', event.type, 'x:', event.touches[0]?.x, 'y:', event.touches[0]?.y);
+                console.log('👆 Touch 事件:', event.type);
 
-                if (event.type === TouchType.Down) {
-                  this.onTouchStart(event);
-                } else if (event.type === TouchType.Move) {
-                  this.onTouchMove(event);
-                } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-                  this.onTouchEnd();
+                if (event.touches && event.touches.length > 0) {
+                  console.log('   坐标: x =', event.touches[0].x, ', y =', event.touches[0].y);
+
+                  if (event.type === TouchType.Down) {
+                    this.onTouchStart(event);
+                  } else if (event.type === TouchType.Move) {
+                    this.onTouchMove(event);
+                  } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+                    this.onTouchEnd();
+                  }
                 }
               })
 
