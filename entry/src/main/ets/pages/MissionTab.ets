@@ -21,12 +21,15 @@ import promptAction from '@ohos.promptAction';
 export default struct MissionTab {
   @Prop currentUsername: string = '';
   @Prop currentToken: string = '';
+  @Prop filterType: number = 0;
   @State tasks: FollowUpTask[] = [];
   @State loading: boolean = false;
   @State searchText: string = '';
   @State syncing: boolean = false;
   @State lastSyncTime: string = '';
   @State toastController: ToastController = new ToastController();
+
+  @State currentFilterIndex: number = 0;
 
   // ✅ 对话框控制
   @State showSyncConfirmDialog: boolean = false;
@@ -39,6 +42,11 @@ export default struct MissionTab {
 
     await this.loadTasks();
     await this.loadLastSyncTime();
+
+    // ✅ 根据传入的 filterType 设置初始筛选
+    if (this.filterType > 0) {
+      this.currentFilterIndex = this.filterType;
+    }
   }
 
   /**
@@ -273,17 +281,35 @@ export default struct MissionTab {
   /**
    * 获取筛选后的任务列表
    */
+  /**
+   * ✅ 获取筛选后的任务列表
+   */
   getFilteredTasks(): FollowUpTask[] {
-    if (!this.searchText) {
-      return this.tasks;
+    let filteredTasks = this.tasks;
+
+    // 1. 先按状态筛选
+    if (this.currentFilterIndex === 1) {
+      // 待执行
+      filteredTasks = filteredTasks.filter(task => task.state === 0);
+    } else if (this.currentFilterIndex === 2) {
+      // 进行中
+      filteredTasks = filteredTasks.filter(task => task.state === 1);
+    } else if (this.currentFilterIndex === 3) {
+      // 已完成
+      filteredTasks = filteredTasks.filter(task => task.state === 2);
     }
 
-    const keyword = this.searchText.toLowerCase();
-    return this.tasks.filter(task =>
-    task.patient_no.toLowerCase().includes(keyword) ||
-    task.project_name.toLowerCase().includes(keyword) ||
-    task.creator.toLowerCase().includes(keyword)
-    );
+    // 2. 再按搜索关键字筛选
+    if (this.searchText) {
+      const keyword = this.searchText.toLowerCase();
+      filteredTasks = filteredTasks.filter(task =>
+      task.patient_no.toLowerCase().includes(keyword) ||
+      task.project_name.toLowerCase().includes(keyword) ||
+      task.creator.toLowerCase().includes(keyword)
+      );
+    }
+
+    return filteredTasks;
   }
 
   /**
@@ -409,6 +435,55 @@ export default struct MissionTab {
         .padding(12)
         .backgroundColor('#F5F5F5')
 
+        // ✅ 新增：筛选标签栏
+        Row() {
+          Button('全部')
+            .fontSize(14)
+            .height(36)
+            .backgroundColor(this.currentFilterIndex === 0 ? '#FF6B00' : '#F5F5F5')
+            .fontColor(this.currentFilterIndex === 0 ? '#FFFFFF' : '#666666')
+            .borderRadius(8)
+            .onClick(() => {
+              this.currentFilterIndex = 0;
+            })
+
+          Button('待执行')
+            .fontSize(14)
+            .height(36)
+            .margin({ left: 12 })
+            .backgroundColor(this.currentFilterIndex === 1 ? '#FF6B00' : '#F5F5F5')
+            .fontColor(this.currentFilterIndex === 1 ? '#FFFFFF' : '#666666')
+            .borderRadius(8)
+            .onClick(() => {
+              this.currentFilterIndex = 1;
+            })
+
+          Button('进行中')
+            .fontSize(14)
+            .height(36)
+            .margin({ left: 12 })
+            .backgroundColor(this.currentFilterIndex === 2 ? '#FF6B00' : '#F5F5F5')
+            .fontColor(this.currentFilterIndex === 2 ? '#FFFFFF' : '#666666')
+            .borderRadius(8)
+            .onClick(() => {
+              this.currentFilterIndex = 2;
+            })
+
+          Button('已完成')
+            .fontSize(14)
+            .height(36)
+            .margin({ left: 12 })
+            .backgroundColor(this.currentFilterIndex === 3 ? '#FF6B00' : '#F5F5F5')
+            .fontColor(this.currentFilterIndex === 3 ? '#FFFFFF' : '#666666')
+            .borderRadius(8)
+            .onClick(() => {
+              this.currentFilterIndex = 3;
+            })
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, bottom: 8 })
+        .backgroundColor('#F5F5F5')
+
         // 最后同步时间
         if (this.lastSyncTime) {
           Row() {
@@ -479,9 +554,9 @@ export default struct MissionTab {
 
                     Text(this.getStateText(task.state))
                       .fontSize(12)
-                      .fontColor(this.getStateColor(task.state))
+                      .fontColor("#FFFFFF")
                       .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                      .backgroundColor(this.getStateColor(task.state) + '20')
+                      .backgroundColor(this.getStateColor(task.state))
                       .borderRadius(4)
                   }
                   .width('100%')

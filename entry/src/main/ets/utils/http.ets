@@ -6,7 +6,7 @@ import http from '@ohos.net.http';
 import { ApiResponse } from '../types';
 
 // 配置你的服务器地址
-const BASE_URL = 'http://127.0.0.1:8080/Xbiosms_war_exploded';
+const BASE_URL = 'http://192.168.48.87:8080/Xbiosms_war_exploded';
 
 class HttpUtil {
   private token: string = '';

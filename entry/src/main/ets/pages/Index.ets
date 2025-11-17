@@ -1,4 +1,3 @@
-
 /**
  * 首页 - 主框架（包含 Tab 切换）
  */
@@ -6,6 +5,7 @@ import router from '@ohos.router';
 import storage, { StorageKeys } from '../utils/storage';
 import http from '../utils/http';
 import { CurrentUser, LocalUser, LocalUsers, UserInfo, TokenVerifyRequest, TokenVerifyResponse } from '../types';
+import MainTab from './MainTab';
 import MissionTab from './MissionTab';
 import MissionLogTab from './MissionLogTab';
 import ProfileTab from './ProfileTab';
@@ -19,6 +19,10 @@ struct Index {
   @State currentUsername: string = '';
   @State currentToken: string = '';
   @State userInfo: UserInfo | null = null;
+
+  // ✅ 用于子组件控制筛选
+  @State missionFilterType: number = 0; // 0=全部, 1=待执行, 2=进行中
+  @State logFilterType: number = 0; // 0=全部, 1=未上传, 2=已上传
 
   private tabController: TabsController = new TabsController();
 
@@ -242,38 +246,40 @@ struct Index {
       } else if (this.isLoggedIn) {
         // 主页内容
         Column() {
-          // 顶部标题栏
-          Row() {
-            Text('随访系统')
-              .fontSize(20)
-              .fontWeight(FontWeight.Bold)
-              .fontColor('#333333')
-          }
-          .width('100%')
-          .height(56)
-          .padding({ left: 16, right: 16 })
-          .backgroundColor('#FFFFFF')
-          .justifyContent(FlexAlign.Center)
-
           // Tab 内容
           Tabs({ barPosition: BarPosition.End, controller: this.tabController }) {
+            // ✅ Tab 0: 主页
+            TabContent() {
+              MainTab({
+                currentUsername: this.currentUsername,
+                currentToken: this.currentToken,
+                userInfo: this.userInfo,
+                currentTabIndex: $currentTabIndex,         // ✅ 双向绑定
+                missionFilterType: $missionFilterType,     // ✅ 双向绑定
+                logFilterType: $logFilterType              // ✅ 双向绑定
+              })
+            }
+            .tabBar(this.tabBuilder(0, '主页', $r('app.media.home'), $r('app.media.home_selected')))
+
             // Tab 1: 任务
             TabContent() {
               MissionTab({
                 currentUsername: this.currentUsername,
-                currentToken: this.currentToken
+                currentToken: this.currentToken,
+                filterType: this.missionFilterType
               })
             }
-            .tabBar(this.tabBuilder(0, '任务', '📋'))
+            .tabBar(this.tabBuilder(1, '任务', $r('app.media.file'), $r('app.media.file_selected')))
 
             // Tab 2: 记录
             TabContent() {
               MissionLogTab({
                 currentUsername: this.currentUsername,
-                currentToken: this.currentToken
+                currentToken: this.currentToken,
+                filterType: this.logFilterType
               })
             }
-            .tabBar(this.tabBuilder(1, '记录', '📝'))
+            .tabBar(this.tabBuilder(2, '记录', $r('app.media.log'), $r('app.media.log_selected')))
 
             // Tab 3: 我的
             TabContent() {
@@ -285,11 +291,12 @@ struct Index {
                 }
               })
             }
-            .tabBar(this.tabBuilder(2, '我的', '👤'))
+            .tabBar(this.tabBuilder(3, '我的', $r('app.media.user'), $r('app.media.user_selected')))
           }
           .width('100%')
-          .layoutWeight(1)
+          .height('100%')
           .barMode(BarMode.Fixed)
+          .padding(0)
           .onChange((index: number) => {
             this.currentTabIndex = index;
             console.log('切换到 Tab:', index);
@@ -308,11 +315,12 @@ struct Index {
    * Tab 标签构建器
    */
   @Builder
-  tabBuilder(index: number, title: string, icon: string) {
+  tabBuilder(index: number, title: string, icon: Resource, iconSelected: Resource) {
     Column() {
-      Text(icon)
-        .fontSize(24)
-        .fontColor(this.currentTabIndex === index ? '#FF6B00' : '#999999')
+      Image(this.currentTabIndex === index ? iconSelected : icon)
+        .width(24)
+        .height(24)
+        .objectFit(ImageFit.Contain)
 
       Text(title)
         .fontSize(12)

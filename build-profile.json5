@@ -1,6 +1,20 @@
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\thewbb\\.ohos\\config\\default_XbioApp_80nWiLGi_MinWYrl7ZQIe6CmOUEgEHsQOY9W9UH43ck=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001A087801C13A595291FD8D308223A51877A1C0D5A5D8F7D099E42EFE4E5D91D21FEB5B54614ACB",
+          "profile": "C:\\Users\\thewbb\\.ohos\\config\\default_XbioApp_80nWiLGi_MinWYrl7ZQIe6CmOUEgEHsQOY9W9UH43ck=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\thewbb\\.ohos\\config\\default_XbioApp_80nWiLGi_MinWYrl7ZQIe6CmOUEgEHsQOY9W9UH43ck=.p12",
+          "storePassword": "0000001A8387EBF5ECB109FD0E89B0B2B9F42454564F9009641B84579FD7336E838D0962A1CF182872B2"
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",

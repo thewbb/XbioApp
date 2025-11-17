@@ -214,7 +214,7 @@ export interface FollowUpTask {
   project?: Project;
 
   local_records?: FormRecord[];  // 本地保存的表单数据
-
+  consent_signature?: ConsentSignature;
 }
 
 // 任务列表请求
@@ -259,6 +259,23 @@ export interface FollowUpRecord {
   synced: boolean;
   syncTime?: number;
 }
+
+export interface SaveSubStepDataParams {
+  token: string;
+  table_name: string;
+  patientNo: string;
+  multi_line: number;
+  subStepId: number;
+  data: string;  // JSON 字符串
+}
+
+export interface ConsentSignature {
+  signature_image: string;      // 签名图片 Base64
+  signature_time: string;        // 签名时间
+  patient_name: string;          // 患者姓名
+  patient_no: string;            // 患者编号
+}
+
 
 // 本地记录存储
 export class LocalRecords {

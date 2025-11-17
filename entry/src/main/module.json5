@@ -50,7 +50,8 @@
       // 只需要网络权限
       {
         "name": "ohos.permission.INTERNET"
-      }
+
+      },
     ]
   }
 }

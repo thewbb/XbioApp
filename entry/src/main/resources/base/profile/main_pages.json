@@ -4,6 +4,7 @@
     "pages/UserPage",
     "pages/MissionPage",
     "pages/FormPage",
-    "pages/RecordDetailPage"
+    "pages/RecordDetailPage",
+    "pages/ConsentPage"
   ]
 }

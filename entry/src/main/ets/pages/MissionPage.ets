@@ -1,6 +1,5 @@
-
 /**
- * 随访任务详情页 - 支持本地数据
+ * 随访任务详情页 - 支持本地数据 + 知情同意书签署
  *
  * 功能：
  * - 从本地加载最新任务数据（包含 local_records）
@@ -8,6 +7,7 @@
  * - 已保存的表单可以点击进入编辑
  * - table.state: 0=未填写，1=已填写
  * - 页面显示时自动刷新数据
+ * - ✅ 知情同意书签署功能（必须签署后才能填写表单）
  */
 import router from '@ohos.router';
 import { FollowUpTask, FormTable, FormField } from '../types';
@@ -86,6 +86,8 @@ struct MissionPage {
    * 打印任务详情（调试用）
    */
   printTaskDetails() {
+    console.log('知情同意书:', this.hasConsent() ? '已签署' : '未签署');
+
     if (this.currentTask?.project && this.currentTask.project.tables) {
       console.log('表单数量:', this.currentTask.project.tables.length);
 
@@ -109,13 +111,22 @@ struct MissionPage {
       const latestTask = tasks.find(t => t.id === this.currentTask?.id);
 
       if (latestTask) {
-        // 更新当前任务数据（保留本地记录）
+        // 更新当前任务数据（保留本地记录和签名）
         this.currentTask = latestTask;
-        console.log('✅ 已加载最新任务数据，本地记录数:', latestTask.local_records?.length || 0);
+        console.log('✅ 已加载最新任务数据');
+        console.log('  - 本地记录数:', latestTask.local_records?.length || 0);
+        console.log('  - 知情同意书:', latestTask.consent_signature ? '已签署' : '未签署');
       }
     } catch (e) {
       console.error('❌ 加载本地任务数据失败:', e);
     }
+  }
+
+  /**
+   * ✅ 检查是否已签署知情同意书
+   */
+  hasConsent(): boolean {
+    return !!this.currentTask?.consent_signature;
   }
 
   /**
@@ -221,9 +232,42 @@ struct MissionPage {
   }
 
   /**
+   * ✅ 点击知情同意书
+   */
+  handleConsentClick() {
+    if (this.hasConsent()) {
+      // 已签署，显示提示（可以扩展为查看大图）
+      this.toastController.show('已签署');
+      return;
+    }
+
+    // 未签署，跳转到签署页面
+    console.log('跳转到知情同意书签署页面');
+
+    router.pushUrl({
+      url: 'pages/ConsentPage',
+      params: {
+        task: this.currentTask,
+        username: this.currentUsername
+      }
+    }).then(() => {
+      console.log('✅ 跳转成功');
+    }).catch((err: Error) => {
+      console.error('❌ 跳转失败:', err);
+      this.toastController.show('打开失败');
+    });
+  }
+
+  /**
    * 点击表单
    */
   handleFormClick(table: FormTable) {
+    // ✅ 检查是否已签署知情同意书
+    if (!this.hasConsent()) {
+      this.toastController.show('请先签署知情同意书');
+      return;
+    }
+
     const hasLocalData = this.hasLocalRecord(table.id);
     const isUploaded = this.isRecordUploaded(table.id);
 
@@ -490,6 +534,9 @@ struct MissionPage {
                 offsetY: 2
               })
 
+              // ✅ 知情同意书卡片
+              this.ConsentCard()
+
               // 随访表单列表
               if (this.currentTask.project && this.currentTask.project.tables &&
                 this.currentTask.project.tables.length > 0) {
@@ -557,7 +604,7 @@ struct MissionPage {
       CustomToast({ controller: this.toastController })
     }
     .width('100%')
-
+    .height('100%')
   }
 
   /**
@@ -578,6 +625,117 @@ struct MissionPage {
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)
+  }
+
+  /**
+   * ✅ 知情同意书卡片
+   */
+  @Builder
+  ConsentCard() {
+    Column() {
+      // 标题行
+      Row() {
+        Text('知情同意书')
+          .fontSize(15)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#333333')
+
+        Blank()
+
+        if (this.hasConsent()) {
+          Text('已签署')
+            .fontSize(11)
+            .fontColor('#FFFFFF')
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+            .backgroundColor('#52C41A')
+            .borderRadius(12)
+        } else {
+          Text('待签署')
+            .fontSize(11)
+            .fontColor('#FFFFFF')
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+            .backgroundColor('#FF6B00')
+            .borderRadius(12)
+        }
+      }
+      .width('100%')
+      .margin({ bottom: 12 })
+
+      // 内容区
+      if (this.hasConsent()) {
+        // ✅ 已签署 - 显示签名图片
+        Column() {
+          Text('患者签名')
+            .fontSize(12)
+            .fontColor('#999999')
+            .margin({ bottom: 8 })
+
+          // 签名图片
+          Image(this.currentTask!.consent_signature!.signature_image)
+            .width('100%')
+            .height(120)
+            .objectFit(ImageFit.Contain)
+            .backgroundColor('#FAFAFA')
+            .borderRadius(8)
+            .border({
+              width: 1,
+              color: '#E5E5E5'
+            })
+
+          Row() {
+            Text(`签署时间：${this.currentTask!.consent_signature!.signature_time}`)
+              .fontSize(12)
+              .fontColor('#999999')
+              .margin({ top: 8 })
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .onClick(() => {
+          this.handleConsentClick();
+        })
+
+      } else {
+        // ✅ 未签署 - 显示签署按钮
+        Column() {
+          Text('📝')
+            .fontSize(48)
+            .margin({ bottom: 8 })
+
+          Text('签署后方可进行随访')
+            .fontSize(13)
+            .fontColor('#666666')
+            .margin({ bottom: 16 })
+
+          Button('立即签署')
+            .fontSize(14)
+            .fontColor('#FFFFFF')
+            .backgroundColor('#FF6B00')
+            .height(40)
+            .width(120)
+            .borderRadius(20)
+            .onClick(() => {
+              this.handleConsentClick();
+            })
+        }
+        .width('100%')
+        .padding({ top: 20, bottom: 20 })
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor('#FAFAFA')
+        .borderRadius(8)
+      }
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor('#FFFFFF')
+    .borderRadius(12)
+    .margin({ top: 16 })
+    .shadow({
+      radius: 8,
+      color: '#00000008',
+      offsetX: 0,
+      offsetY: 2
+    })
   }
 
   /**

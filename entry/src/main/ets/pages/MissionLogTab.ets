@@ -1,4 +1,3 @@
-
 /**
  * 记录列表 Tab
  *
@@ -11,9 +10,43 @@
  */
 import router from '@ohos.router';
 import storage, { StorageKeys } from '../utils/storage';
-import { FollowUpTask, FormRecord } from '../types';
+import { FollowUpTask, FormRecord, FormTable } from '../types';
 import http from '../utils/http';
 import { CustomToast, ToastController } from '../components/CustomToast';
+import {SaveSubStepDataParams} from '../types/index';
+
+/**
+ * ✅ 上传表单数据到服务器
+ */
+async function saveSubStepData(params: SaveSubStepDataParams): Promise<boolean> {
+  try {
+    const request :SaveSubStepDataParams = {
+      token: params.token,
+      table_name: params.table_name,
+      patientNo: params.patientNo,
+      multi_line: params.multi_line,
+      subStepId: params.subStepId,
+      data: params.data
+    };
+
+    console.log('📤 上传表单数据:', request);
+
+    let response = await http.post('/mobile/saveSubStepData.json', request);
+    console.log('上传响应 code:', response.code);
+
+    if (response.code === 0) {
+      console.log('✅ 表单上传成功');
+      return true;
+    } else {
+      console.error('❌ 表单上传失败:', response.message);
+      return false;
+    }
+  } catch (err) {
+    const e = err as Error;
+    console.error('❌ 表单上传异常:', e.message);
+    return false;
+  }
+}
 
 /**
  * ✅ 记录项（包含任务信息）
@@ -28,6 +61,7 @@ interface RecordItem {
 export default struct MissionLogTab {
   @Prop currentUsername: string = '';
   @Prop currentToken: string = '';
+  @Prop filterType: number = 0;
   @State records: RecordItem[] = [];
   @State currentFilterIndex: number = 0;  // 0=全部，1=未上传，2=已上传
   @State loading: boolean = false;
@@ -62,6 +96,10 @@ export default struct MissionLogTab {
         this.records = [];
         this.loading = false;
         return;
+      }
+
+      if (this.filterType > 0) {
+        this.currentFilterIndex = this.filterType;
       }
 
       const tasks: FollowUpTask[] = JSON.parse(tasksStr);
@@ -116,15 +154,75 @@ export default struct MissionLogTab {
   }
 
   /**
+   * ✅ 获取表单信息
+   */
+
+  getTableInfo(record: RecordItem): FormTable | undefined {
+    if (!record.task.project || !record.task.project.tables) {
+      return undefined;
+    }
+
+    const tables: FormTable[] = record.task.project.tables;
+    for (let i = 0; i < tables.length; i++) {
+      if (tables[i].id === record.record.table_id) {
+        return tables[i];
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
    * ✅ 获取表单名称
    */
   getTableName(record: RecordItem): string {
-    if (!record.task.project || !record.task.project.tables) {
-      return '未知表单';
-    }
-
-    const table = record.task.project.tables.find(t => t.id === record.record.table_id);
+    const table = this.getTableInfo(record);
     return table ? table.step_name : '未知表单';
+  }
+
+  /**
+   * ✅ 上传单条记录
+   */
+  async uploadRecord(item: RecordItem): Promise<boolean> {
+    try {
+      const table = this.getTableInfo(item);
+      if (!table) {
+        console.error('表单不存在:', item.record.table_id);
+        return false;
+      }
+
+      console.log('开始上传记录:', table.table_name);
+
+      // 调用接口上传数据
+      const params: SaveSubStepDataParams = {
+        token: this.currentToken,
+        table_name: table.table_name,
+        patientNo: item.task.patient_no,
+        multi_line: table.multi_line,
+        subStepId: item.record.step_id,
+        data: JSON.stringify(item.record.data)
+      };
+
+      const uploadSuccess = await saveSubStepData(params);
+
+      if (uploadSuccess) {
+        // 标记为已上传
+        await storage.markRecordAsUploaded(
+          this.currentUsername,
+          item.taskId,
+          item.record.table_id
+        );
+        console.log('✅ 记录上传成功');
+        return true;
+      }
+
+      console.error('❌ 记录上传失败');
+      return false;
+    } catch (err) {
+      const e = err as Error;
+      console.error('❌ 上传记录异常:', e.message);
+      return false;
+    }
   }
 
   /**
@@ -159,29 +257,14 @@ export default struct MissionLogTab {
 
       for (let item of unsyncedRecords) {
         try {
-          // TODO: 调用实际上传接口
-          // const submitData = {
-          //   token: this.currentToken,
-          //   task_id: item.taskId,
-          //   table_id: item.record.table_id,
-          //   step_id: item.record.step_id,
-          //   patient_no: item.task.patient_no,
-          //   data: item.record.data
-          // };
-          // let response = await http.post('/mobile/submitForm.json', submitData);
+          const success = await this.uploadRecord(item);
 
-          // 模拟上传
-          await new Promise<void>(resolve => setTimeout(resolve, 500));
-
-          // ✅ 标记为已上传
-          await storage.markRecordAsUploaded(
-            this.currentUsername,
-            item.taskId,
-            item.record.table_id
-          );
-
-          successCount++;
-          console.log(`✅ 上传成功: ${item.task.patient_no} - ${this.getTableName(item)}`);
+          if (success) {
+            successCount++;
+            console.log(`✅ 上传成功: ${item.task.patient_no} - ${this.getTableName(item)}`);
+          } else {
+            failCount++;
+          }
 
         } catch (uploadError) {
           failCount++;
@@ -378,18 +461,26 @@ export default struct MissionLogTab {
             ForEach(this.getFilteredRecords(), (item: RecordItem) => {
               ListItem() {
                 Column() {
-                  // 第一行：患者编号 + 上传状态
+                  // 第一行：患者姓名 + 患者编号 + 上传状态
                   Row() {
-                    Text(item.task.patient_no)
-                      .fontSize(16)
-                      .fontWeight(FontWeight.Bold)
-                      .fontColor('#333333')
+                    Column() {
+                      Text(item.task.name || '未知患者')
+                        .fontSize(16)
+                        .fontWeight(FontWeight.Bold)
+                        .fontColor('#333333')
+
+                      Text(`编号: ${item.task.patient_no}`)
+                        .fontSize(12)
+                        .fontColor('#999999')
+                        .margin({ top: 2 })
+                    }
+                    .alignItems(HorizontalAlign.Start)
 
                     Blank()
 
                     Text(item.record.is_uploaded ? '✓ 已上传' : '⊙ 未上传')
                       .fontSize(12)
-                      .fontColor(item.record.is_uploaded ? '#52C41A' : '#FF6B00')
+                      .fontColor(item.record.is_uploaded ? '#52C41A' : '#FFFFFF')
                       .padding({ left: 8, right: 8, top: 4, bottom: 4 })
                       .backgroundColor(item.record.is_uploaded ? '#52C41A20' : '#FF6B0020')
                       .borderRadius(4)
@@ -399,7 +490,7 @@ export default struct MissionLogTab {
 
                   // 第二行：项目名称
                   Row() {
-                    Text(`项目：${item.task.project_name}`)
+                    Text(`项目：${item.task.project_name || '未知项目'}`)
                       .fontSize(14)
                       .fontColor('#666666')
                   }
@@ -438,7 +529,7 @@ export default struct MissionLogTab {
                     })
                 )
               }
-            })
+            }, (item: RecordItem) => `${item.taskId}_${item.record.table_id}`)
           }
           .width('100%')
           .layoutWeight(1)
@@ -468,7 +559,7 @@ export default struct MissionLogTab {
               .textAlign(TextAlign.Center)
               .margin({ bottom: 8 })
 
-            Text(`患者：${this.recordToDelete.task.patient_no}`)
+            Text(`患者：${this.recordToDelete.task.name || ''} (${this.recordToDelete.task.patient_no})`)
               .fontSize(12)
               .fontColor('#999999')
               .margin({ bottom: 4 })

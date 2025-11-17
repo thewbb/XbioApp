@@ -498,58 +498,25 @@ struct FormPage {
         step_id: this.currentTable!.step_id,
         data: dataObj,
         filled_time: new Date().toLocaleString('zh-CN'),
-        is_uploaded: false
+        is_uploaded: false  // 标记为未上传
       };
 
+      // 只保存到本地
       const saveSuccess = await storage.saveFormRecord(
         this.currentUsername,
         this.currentTask!.id,
         record
       );
 
-      if (!saveSuccess) {
+      this.submitting = false;
+
+      if (saveSuccess) {
+        console.log('✅ 本地保存成功');
+        this.toastController.show('✅ 保存成功，可在记录页面上传');
+        this.scheduleBack(1500);
+      } else {
         throw new Error('本地保存失败');
       }
-
-      console.log('✅ 本地保存成功');
-
-      let isOnline = await http.isOnline();
-
-      if (isOnline) {
-        try {
-          const submitData: SubmitFormData = {
-            token: this.token,
-            task_id: this.currentTask?.id,
-            table_id: this.currentTable?.id,
-            step_id: this.currentTable?.step_id,
-            patient_no: this.currentTask?.patient_no,
-            data: dataObj
-          };
-
-          console.log('提交数据:', JSON.stringify(submitData));
-
-          await new Promise<void>(resolve => setTimeout(resolve, 1000));
-
-          await storage.markRecordAsUploaded(
-            this.currentUsername,
-            this.currentTask!.id,
-            this.currentTable!.id
-          );
-
-          console.log('✅ 上传成功');
-          this.toastController.show('✅ 提交成功');
-
-        } catch (uploadError) {
-          console.error('❌ 上传失败，但本地已保存:', uploadError);
-          this.toastController.show('已保存到本地，稍后可在记录页面上传');
-        }
-      } else {
-        console.log('⚠️ 网络不可用，数据已保存到本地');
-        this.toastController.show('已保存到本地，稍后可在记录页面上传');
-      }
-
-      this.submitting = false;
-      this.scheduleBack(1500);
 
     } catch (err) {
       const e = err as Error;
