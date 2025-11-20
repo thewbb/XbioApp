@@ -1,5 +1,5 @@
 /**
- * 任务列表 Tab - 带同步检查 + 项目筛选 + 知情同意书标识
+ * 任务列表 Tab - 带同步检查 + 项目筛选 + 知情同意书标识 + 下拉刷新
  */
 import router from '@ohos.router';
 import storage, { StorageKeys } from '../utils/storage';
@@ -17,7 +17,8 @@ interface ProjectOption {
 export default struct MissionTab {
   @Prop currentUsername: string = '';
   @Prop currentToken: string = '';
-  @Link filterType: number;  // ✅ 改为 @Link，接收父组件传递的筛选
+  @Link filterType: number;
+  @Link refreshFlag: number;
 
   @State tasks: FollowUpTask[] = [];
   @State loading: boolean = false;
@@ -36,6 +37,12 @@ export default struct MissionTab {
   @State showSyncConfirmDialog: boolean = false;
   @State pendingUploadCount: number = 0;
 
+  // ✅ 上一次的刷新标志（用于检测变化）
+  private lastRefreshFlag: number = 0;
+
+  // ✅ 下拉刷新相关
+  @State isRefreshing: boolean = false;
+
   async aboutToAppear() {
     console.log('========== MissionTab 加载 ==========');
     console.log('用户名:', this.currentUsername);
@@ -48,16 +55,19 @@ export default struct MissionTab {
     if (this.filterType > 0) {
       this.currentFilterIndex = this.filterType;
     }
+
+    // ✅ 记录初始刷新标志
+    this.lastRefreshFlag = this.refreshFlag;
   }
 
   /**
-   * ✅ 页面显示时刷新数据（解决详情页返回后状态不更新的问题）
+   * ✅ 监听 refreshFlag 变化
    */
-  async onPageShow() {
-    console.log('========== MissionTab 显示 ==========');
-    // 只有当已经加载过数据时才重新加载，避免首次重复加载
-    if (this.tasks.length > 0 || !this.loading) {
-      await this.loadTasks();
+  aboutToUpdate() {
+    if (this.refreshFlag !== this.lastRefreshFlag) {
+      console.log('🔄 检测到刷新标志变化，重新加载数据');
+      this.lastRefreshFlag = this.refreshFlag;
+      this.loadTasks();
     }
   }
 
@@ -67,8 +77,6 @@ export default struct MissionTab {
   async loadTasks() {
     try {
       console.log('从本地加载任务列表...');
-      // 注意：这里不设置 this.loading = true，以免每次返回都闪烁 loading
-      // 仅在首次加载或显式刷新时控制 loading
 
       let tasksStr: string = await storage.getUserData(
         this.currentUsername,
@@ -90,6 +98,30 @@ export default struct MissionTab {
     } catch (e) {
       console.error('❌ 加载任务失败:', e);
       this.tasks = [];
+    }
+  }
+
+  /**
+   * ✅ 下拉刷新处理
+   */
+  async handleRefresh() {
+    console.log('🔄 下拉刷新触发');
+    this.isRefreshing = true;
+
+    try {
+      // 重新加载本地数据
+      await this.loadTasks();
+      await this.loadLastSyncTime();
+
+      this.toastController.show('已刷新');
+    } catch (e) {
+      console.error('刷新失败:', e);
+      this.toastController.show('刷新失败');
+    } finally {
+      // 延迟关闭刷新动画，确保用户能看到反馈
+      setTimeout(() => {
+        this.isRefreshing = false;
+      }, 500);
     }
   }
 
@@ -560,7 +592,7 @@ export default struct MissionTab {
           .padding({ left: 12, right: 12, bottom: 8 })
         }
 
-        // 任务列表
+        // ✅ 任务列表（使用 Refresh 包裹支持下拉刷新）
         if (this.loading) {
           Column() {
             LoadingProgress()
@@ -604,138 +636,146 @@ export default struct MissionTab {
           .backgroundColor('#F5F5F5')
 
         } else {
-          List({ space: 12 }) {
-            ForEach(this.getFilteredTasks(), (task: FollowUpTask) => {
-              ListItem() {
-                Column() {
-                  // 第一行：患者编号 + 任务状态标签 + 知情同意书标签
-                  Row() {
-                    Text(task.patient_no)
-                      .fontSize(16)
-                      .fontWeight(FontWeight.Bold)
-                      .fontColor('#333333')
+          // ✅ 使用 Refresh 包裹 List，支持下拉刷新
+          Refresh({ refreshing: $$this.isRefreshing }) {
+            List({ space: 12 }) {
+              ForEach(this.getFilteredTasks(), (task: FollowUpTask) => {
+                ListItem() {
+                  Column() {
+                    // 第一行：患者编号 + 任务状态标签 + 知情同意书标签
+                    Row() {
+                      Text(task.patient_no)
+                        .fontSize(16)
+                        .fontWeight(FontWeight.Bold)
+                        .fontColor('#333333')
 
-                    Blank()
+                      Blank()
 
-                    // ✅ 1. 添加知情同意书标签 (仅在已签署时显示)
-                    if (task.consent_signature) {
-                      Text('已签署')
+                      // ✅ 1. 添加知情同意书标签 (仅在已签署时显示)
+                      if (task.consent_signature) {
+                        Text('已签署')
+                          .fontSize(12)
+                          .fontColor('#FFFFFF')
+                          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                          .backgroundColor('#52C41A') // 绿色
+                          .borderRadius(4)
+                          .margin({ right: 8 })
+                      }
+
+                      Text(this.getStateText(task.state))
                         .fontSize(12)
-                        .fontColor('#FFFFFF')
+                        .fontColor("#FFFFFF")
                         .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                        .backgroundColor('#52C41A') // 绿色
+                        .backgroundColor(this.getStateColor(task.state))
                         .borderRadius(4)
-                        .margin({ right: 8 })
+                    }
+                    .width('100%')
+                    .margin({ bottom: 8 })
+
+                    // 第二行：患者姓名（如果有）
+                    if (task.name) {
+                      Row() {
+                        Text(`患者：${task.name}`)
+                          .fontSize(14)
+                          .fontColor('#666666')
+                      }
+                      .width('100%')
+                      .margin({ bottom: 8 })
                     }
 
-                    Text(this.getStateText(task.state))
-                      .fontSize(12)
-                      .fontColor("#FFFFFF")
-                      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                      .backgroundColor(this.getStateColor(task.state))
-                      .borderRadius(4)
-                  }
-                  .width('100%')
-                  .margin({ bottom: 8 })
-
-                  // 第二行：患者姓名（如果有）
-                  if (task.name) {
+                    // 第三行：项目名称
                     Row() {
-                      Text(`患者：${task.name}`)
+                      Text(`项目：${task.project_name}`)
                         .fontSize(14)
                         .fontColor('#666666')
                     }
                     .width('100%')
                     .margin({ bottom: 8 })
-                  }
 
-                  // 第三行：项目名称
-                  Row() {
-                    Text(`项目：${task.project_name}`)
-                      .fontSize(14)
-                      .fontColor('#666666')
-                  }
-                  .width('100%')
-                  .margin({ bottom: 8 })
+                    // 任务完成进度
+                    Column() {
+                      Row() {
+                        Text('任务进度')
+                          .fontSize(12)
+                          .fontColor('#999999')
 
-                  // 任务完成进度
-                  Column() {
+                        Blank()
+
+                        Row() {
+                          Text(`${this.getTableStats(task)} 表格`)
+                            .fontSize(11)
+                            .fontColor('#999999')
+                            .margin({ right: 8 })
+
+                          Text(this.getPercentText(task.percent))
+                            .fontSize(12)
+                            .fontColor('#333333')
+                            .fontWeight(FontWeight.Medium)
+                        }
+                      }
+                      .width('100%')
+                      .margin({ bottom: 4 })
+
+                      // 进度条
+                      Stack() {
+                        Row()
+                          .width('100%')
+                          .height(6)
+                          .backgroundColor('#F0F0F0')
+                          .borderRadius(3)
+
+                        Row()
+                          .width(`${task.percent}%`)
+                          .height(6)
+                          .backgroundColor(this.getPercentColor(task.percent))
+                          .borderRadius(3)
+                      }
+                      .width('100%')
+                      .alignContent(Alignment.Start)
+                    }
+                    .width('100%')
+                    .margin({ bottom: 8 })
+
+                    // 创建人和创建时间
                     Row() {
-                      Text('任务进度')
+                      Text(`创建人：${task.creator}`)
                         .fontSize(12)
                         .fontColor('#999999')
 
                       Blank()
 
-                      Row() {
-                        Text(`${this.getTableStats(task)} 表格`)
-                          .fontSize(11)
-                          .fontColor('#999999')
-                          .margin({ right: 8 })
-
-                        Text(this.getPercentText(task.percent))
-                          .fontSize(12)
-                          .fontColor('#333333')
-                          .fontWeight(FontWeight.Medium)
-                      }
+                      Text(task.create_time)
+                        .fontSize(12)
+                        .fontColor('#CCCCCC')
                     }
                     .width('100%')
-                    .margin({ bottom: 4 })
-
-                    // 进度条
-                    Stack() {
-                      Row()
-                        .width('100%')
-                        .height(6)
-                        .backgroundColor('#F0F0F0')
-                        .borderRadius(3)
-
-                      Row()
-                        .width(`${task.percent}%`)
-                        .height(6)
-                        .backgroundColor(this.getPercentColor(task.percent))
-                        .borderRadius(3)
-                    }
-                    .width('100%')
-                    .alignContent(Alignment.Start)
                   }
                   .width('100%')
-                  .margin({ bottom: 8 })
-
-                  // 创建人和创建时间
-                  Row() {
-                    Text(`创建人：${task.creator}`)
-                      .fontSize(12)
-                      .fontColor('#999999')
-
-                    Blank()
-
-                    Text(task.create_time)
-                      .fontSize(12)
-                      .fontColor('#CCCCCC')
-                  }
-                  .width('100%')
+                  .padding(16)
+                  .backgroundColor('#FFFFFF')
+                  .borderRadius(8)
+                  .onClick(() => {
+                    this.handleTaskClick(task);
+                  })
                 }
-                .width('100%')
-                .padding(16)
-                .backgroundColor('#FFFFFF')
-                .borderRadius(8)
-                .onClick(() => {
-                  this.handleTaskClick(task);
-                })
-              }
-            })
+              })
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .padding({ left: 12, right: 12, top: 0, bottom: 12 })
+            .backgroundColor('#F5F5F5')
           }
           .width('100%')
           .layoutWeight(1)
-          .padding({ left: 12, right: 12, bottom: 12 })
-          .backgroundColor('#F5F5F5')
+          .onRefreshing(() => {
+            this.handleRefresh();
+          })
         }
       }
       .width('100%')
       .height('100%')
 
-      // 同步确认对话框 (代码保持不变)
+      // 同步确认对话框
       if (this.showSyncConfirmDialog) {
         Column() {
           Column() {

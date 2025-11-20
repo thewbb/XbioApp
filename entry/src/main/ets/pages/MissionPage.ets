@@ -7,13 +7,14 @@
  * - 已保存的表单可以点击进入编辑
  * - table.state: 0=未填写，1=已填写
  * - 页面显示时自动刷新数据
- * - ✅ 知情同意书签署功能（必须签署后才能填写表单）
+ * - ✅ 可以填写表单，但必须签署知情同意书后才能上传
  */
 import router from '@ohos.router';
 import { FollowUpTask, FormTable, FormField } from '../types';
 import { CustomToast, ToastController } from '../components/CustomToast';
 import storage from '../utils/storage';
 import { SignatureCanvas } from '../components/SignatureCanvas';
+
 /**
  * 任务统计信息接口
  */
@@ -214,7 +215,7 @@ struct MissionPage {
   }
 
   /**
-   * 判断表单是否可以填写
+   * ✅ 判断表单是否可以填写（修改：不检查知情同意书）
    * - 未填写（state=0）可以填写
    * - 有本地记录但未上传，可以继续编辑
    */
@@ -259,15 +260,9 @@ struct MissionPage {
   }
 
   /**
-   * 点击表单
+   * ✅ 点击表单（修改：允许填写，但提示需要签名才能上传）
    */
   handleFormClick(table: FormTable) {
-    // ✅ 检查是否已签署知情同意书
-    if (!this.hasConsent()) {
-      this.toastController.show('请先签署知情同意书');
-      return;
-    }
-
     const hasLocalData = this.hasLocalRecord(table.id);
     const isUploaded = this.isRecordUploaded(table.id);
 
@@ -275,6 +270,7 @@ struct MissionPage {
     console.log('  state:', table.state);
     console.log('  hasLocalData:', hasLocalData);
     console.log('  isUploaded:', isUploaded);
+    console.log('  hasConsent:', this.hasConsent());
 
     // 已上传的不能再编辑
     if (table.state === 1 && isUploaded) {
@@ -284,6 +280,11 @@ struct MissionPage {
 
     // 可以填写或编辑
     if (this.isTableFillable(table)) {
+      // ✅ 如果未签署知情同意书，提示但仍然允许填写
+      if (!this.hasConsent()) {
+        this.toastController.show('提醒：需签署知情同意书后才能上传');
+      }
+
       console.log('跳转到填写页面');
 
       router.pushUrl({
@@ -628,7 +629,7 @@ struct MissionPage {
   }
 
   /**
-   * ✅ 知情同意书卡片
+   * ✅ 知情同意书卡片（修改：改为温馨提示样式）
    */
   @Builder
   ConsentCard() {
@@ -654,7 +655,7 @@ struct MissionPage {
             .fontSize(11)
             .fontColor('#FFFFFF')
             .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-            .backgroundColor('#FF6B00')
+            .backgroundColor('#FF9800')
             .borderRadius(12)
         }
       }
@@ -712,33 +713,51 @@ struct MissionPage {
         })
 
       } else {
-        // ✅ 未签署 - 显示签署按钮
+        // ✅ 未签署 - 显示温馨提示
         Column() {
+          // 提示图标
           Text('📝')
-            .fontSize(48)
+            .fontSize(40)
             .margin({ bottom: 8 })
 
-          Text('签署后方可进行随访')
-            .fontSize(13)
-            .fontColor('#666666')
-            .margin({ bottom: 16 })
+          // 主要提示
+          Text('温馨提示')
+            .fontSize(14)
+            .fontColor('#333333')
+            .fontWeight(FontWeight.Medium)
+            .margin({ bottom: 6 })
 
+          // 说明文本
+          Text('可以先填写随访表单，但需签署知情同意书后才能上传数据')
+            .fontSize(12)
+            .fontColor('#666666')
+            .textAlign(TextAlign.Center)
+            .lineHeight(18)
+            .margin({ bottom: 14 })
+            .width('90%')
+
+          // 签署按钮
           Button('立即签署')
             .fontSize(14)
             .fontColor('#FFFFFF')
             .backgroundColor('#FF6B00')
-            .height(40)
-            .width(120)
-            .borderRadius(20)
+            .height(38)
+            .width(110)
+            .borderRadius(19)
             .onClick(() => {
               this.handleConsentClick();
             })
         }
         .width('100%')
-        .padding({ top: 20, bottom: 20 })
+        .padding({ top: 16, bottom: 16 })
         .justifyContent(FlexAlign.Center)
-        .backgroundColor('#FAFAFA')
+        .backgroundColor('#FFF9F0')
         .borderRadius(8)
+        .border({
+          width: 1,
+          color: '#FFE7BA',
+          style: BorderStyle.Dashed
+        })
       }
     }
     .width('100%')

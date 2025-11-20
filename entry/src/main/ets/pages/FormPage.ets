@@ -30,9 +30,11 @@ struct FormPage {
 
   private backTimer: number = -1;
 
+  private uiContext: UIContext | null = null;
+
   async aboutToAppear() {
     console.log('========== FormPage 加载 ==========');
-
+    this.uiContext = this.getUIContext();
     const params = router.getParams() as Record<string, Object>;
 
     if (params && params['task']) {
@@ -718,7 +720,9 @@ struct FormPage {
         this.toastController.show('✅ 保存成功，可在记录页面上传');
 
         // ✅ 修复：确保返回上一页
-        router.back();
+        if (this.uiContext) {
+          this.uiContext.getRouter().back();
+        }
       } else {
         throw new Error('本地保存失败');
       }

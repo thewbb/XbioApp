@@ -1,5 +1,5 @@
 /**
- * 首页 - 主框架（包含 Tab 切换）
+ * 首页 - 主框架（包含 Tab 切换）+ 自动刷新支持
  */
 import router from '@ohos.router';
 import storage, { StorageKeys } from '../utils/storage';
@@ -24,12 +24,27 @@ struct Index {
   @State missionFilterType: number = 0; // 0=全部, 1=待执行, 2=进行中
   @State logFilterType: number = 0; // 0=全部, 1=未上传, 2=已上传
 
+  // ✅ 新增：刷新标志（用于触发子组件刷新）
+  @State refreshFlag: number = 0;
+
   private tabController: TabsController = new TabsController();
 
   async aboutToAppear() {
     console.log('========== Index 页面加载 ==========');
     await storage.init();
     await this.checkLoginStatus();
+  }
+
+  /**
+   * ✅ 页面显示时触发刷新
+   */
+  onPageShow() {
+    console.log('========== Index 页面显示 ==========');
+    if (this.isLoggedIn) {
+      // 递增刷新标志，触发子组件刷新
+      this.refreshFlag++;
+      console.log('✅ 触发刷新，refreshFlag:', this.refreshFlag);
+    }
   }
 
   /**
@@ -261,12 +276,13 @@ struct Index {
             }
             .tabBar(this.tabBuilder(0, '主页', $r('app.media.home'), $r('app.media.home_selected')))
 
-            // Tab 1: 任务
+            // ✅ Tab 1: 任务（添加 refreshFlag）
             TabContent() {
               MissionTab({
                 currentUsername: this.currentUsername,
                 currentToken: this.currentToken,
-                filterType: this.missionFilterType
+                filterType: $missionFilterType,           // ✅ 改为双向绑定
+                refreshFlag: $refreshFlag                 // ✅ 新增：传递刷新标志
               })
             }
             .tabBar(this.tabBuilder(1, '任务', $r('app.media.file'), $r('app.media.file_selected')))
@@ -276,7 +292,7 @@ struct Index {
               MissionLogTab({
                 currentUsername: this.currentUsername,
                 currentToken: this.currentToken,
-                filterType: this.logFilterType
+                filterType: this.logFilterType               // ✅ 改为双向绑定
               })
             }
             .tabBar(this.tabBuilder(2, '记录', $r('app.media.log'), $r('app.media.log_selected')))
