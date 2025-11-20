@@ -1,27 +1,19 @@
-
 /**
  * 表单填写页面
  *
- * 修复所有类型错误
+ * 修复：
+ * 1. 提交后无法返回上一页的问题
+ * 2. 公式计算逻辑（支持选项分值计算 A=3）
+ * 3. 使用安全的表达式计算器（不使用 eval/new Function）
  */
 import router from '@ohos.router';
 import { FollowUpTask, FormTable, FormField, FormRecord } from '../types';
 import { CustomToast, ToastController } from '../components/CustomToast';
-import http from '../utils/http';
 import storage from '../utils/storage';
 
 interface OptionItem {
   label: string;
   value: string;
-}
-
-interface SubmitFormData {
-  token: string;
-  task_id: number | undefined;
-  table_id: number | undefined;
-  step_id: number | undefined;
-  patient_no: string | undefined;
-  data: Record<string, string>;
 }
 
 @Entry
@@ -79,9 +71,17 @@ struct FormPage {
     }
   }
 
+  /**
+   * ✅ 统一返回逻辑
+   */
   scheduleBack(delay: number) {
+    if (this.backTimer !== -1) {
+      clearTimeout(this.backTimer);
+    }
+
     this.backTimer = setTimeout(() => {
       try {
+        console.log('🔙 执行返回上一页');
         router.back();
       } catch (e) {
         console.error('返回失败:', e);
@@ -143,6 +143,7 @@ struct FormPage {
 
   /**
    * ✅ 解析选项列表
+   * 支持 "A=3,B=4" 或 "是,否" 格式
    */
   parseOptions(selectValue: string | undefined): OptionItem[] {
     if (!selectValue || selectValue === '') {
@@ -212,6 +213,9 @@ struct FormPage {
     this.setFieldValue(fieldName, selectedValues.join(','));
   }
 
+  /**
+   * ✅ 计算所有公式字段
+   */
   calculateAllFormulas() {
     if (!this.currentTable || !this.currentTable.fields) {
       return;
@@ -230,8 +234,14 @@ struct FormPage {
     formulaFields.forEach(field => {
       try {
         const result = this.calculateFormula(field.formula!);
-        this.formData.set(field.field_name, result.toString());
-        console.log(`公式计算: ${field.field_name} = ${result} (公式: ${field.formula})`);
+        const currentValue = this.getFieldValue(field.field_name);
+        const newValue = result.toString();
+
+        // 只有值变化时才更新，避免无限循环
+        if (currentValue !== newValue) {
+          this.formData.set(field.field_name, newValue);
+          console.log(`🧮 公式计算: ${field.field_name} = ${result} (公式: ${field.formula})`);
+        }
       } catch (err) {
         const e = err as Error;
         console.error(`计算公式失败: ${field.field_name}`, e.message);
@@ -240,6 +250,15 @@ struct FormPage {
     });
   }
 
+  /**
+   * ✅ 核心修复：公式计算逻辑（使用手写解析器）
+   *
+   * 规则：
+   * 1. 公式格式：field1 * 0.5 + field2
+   * 2. 如果 field 的 select_value = "A=3,B=4"，当前选择了 A，则取值 3
+   * 3. 如果 field 的值是纯数字，直接计算
+   * 4. 如果 field 的值是字符串（非数字），尝试匹配选项的 value，否则视为 0
+   */
   calculateFormula(formula: string): number {
     let expression = formula;
 
@@ -247,28 +266,208 @@ struct FormPage {
       return 0;
     }
 
+    // 遍历所有字段，替换公式中的变量名为数值
     this.currentTable.fields.forEach(field => {
       const fieldName = field.field_name;
-      const fieldValue = this.getFieldValue(fieldName);
-      const numValue = parseFloat(fieldValue) || 0;
+
+      // 使用正则确保全字匹配（避免 field1 匹配到 field11）
       const regex = new RegExp(`\\b${fieldName}\\b`, 'g');
+      if (!regex.test(expression)) {
+        return; // 公式中不包含该字段
+      }
+
+      const rawValue = this.getFieldValue(fieldName);
+      let numValue = 0;
+
+      console.log(`  处理字段 ${fieldName}, 原始值: "${rawValue}"`);
+
+      // 1. 如果字段值为空
+      if (!rawValue || rawValue.trim() === '') {
+        numValue = 0;
+      }
+      // 2. 如果字段值是纯数字（包括小数）
+      else if (!isNaN(Number(rawValue))) {
+        numValue = parseFloat(rawValue);
+        console.log(`    -> 数值: ${numValue}`);
+      }
+      // 3. 如果字段值不是数字（可能是选项的 label 或 value）
+      else {
+        // 尝试从选项定义中找对应的数值
+        const options = this.parseOptions(field.select_value);
+
+        // 先检查是否是某个选项的 value（直接匹配）
+        const matchedOption = options.find(opt => opt.value === rawValue);
+        if (matchedOption) {
+          // 如果 value 本身是数字，则使用
+          if (!isNaN(Number(matchedOption.value))) {
+            numValue = parseFloat(matchedOption.value);
+            console.log(`    -> 匹配到选项 value: ${numValue}`);
+          } else {
+            numValue = 0;
+            console.log(`    -> 选项 value 不是数字，使用 0`);
+          }
+        }
+        // 再检查是否是某个选项的 label
+        else {
+          const matchedByLabel = options.find(opt => opt.label === rawValue);
+          if (matchedByLabel && !isNaN(Number(matchedByLabel.value))) {
+            numValue = parseFloat(matchedByLabel.value);
+            console.log(`    -> 匹配到选项 label: ${rawValue}, value: ${numValue}`);
+          } else {
+            numValue = 0;
+            console.log(`    -> 未匹配到有效选项，使用 0`);
+          }
+        }
+      }
+
+      // 替换公式中的字段名为数值
       expression = expression.replace(regex, numValue.toString());
     });
 
-    console.log('公式表达式:', formula, '→', expression);
+    console.log(`  最终表达式: ${expression}`);
 
     try {
-      if (!/^[\d\s+\-*\/().]+$/.test(expression)) {
-        throw new Error('公式包含非法字符');
-      }
+      // ✅ 使用安全的表达式计算器
+      const result = this.evaluateExpression(expression);
+      console.log(`  计算结果: ${result}`);
 
-      const result = new Function(`return ${expression}`)() as number;
+      // 保留两位小数
       return Math.round(result * 100) / 100;
     } catch (err) {
-      const e = err as Error;
-      console.error('公式计算错误:', expression, e.message);
+      console.error('  ❌ 计算错误:', err);
       return 0;
     }
+  }
+
+  /**
+   * ✅ 安全的数学表达式计算器（支持 +、-、*、/、()）
+   * 使用逆波兰表达式（RPN）算法
+   */
+  evaluateExpression(expr: string): number {
+    // 去除空格
+    expr = expr.replace(/\s+/g, '');
+
+    // 词法分析：将表达式拆分为 token
+    const tokens: string[] = [];
+    let numBuffer = '';
+
+    for (let i = 0; i < expr.length; i++) {
+      const char = expr[i];
+
+      if (char >= '0' && char <= '9' || char === '.') {
+        numBuffer += char;
+      } else if (char === '+' || char === '-' || char === '*' || char === '/' || char === '(' || char === ')') {
+        if (numBuffer) {
+          tokens.push(numBuffer);
+          numBuffer = '';
+        }
+        tokens.push(char);
+      } else {
+        throw new Error(`非法字符: ${char}`);
+      }
+    }
+
+    if (numBuffer) {
+      tokens.push(numBuffer);
+    }
+
+    console.log('  Tokens:', tokens);
+
+    // 转换为逆波兰表达式（后缀表达式）
+    const rpn = this.toRPN(tokens);
+    console.log('  RPN:', rpn);
+
+    // 计算逆波兰表达式
+    return this.calculateRPN(rpn);
+  }
+
+  /**
+   * 中缀表达式转逆波兰表达式（Shunting Yard 算法）
+   */
+  toRPN(tokens: string[]): string[] {
+    const output: string[] = [];
+    const operators: string[] = [];
+
+    const precedence: Record<string, number> = {
+      '+': 1,
+      '-': 1,
+      '*': 2,
+      '/': 2
+    };
+
+    for (let token of tokens) {
+      if (!isNaN(Number(token))) {
+        // 数字直接输出
+        output.push(token);
+      } else if (token === '(') {
+        operators.push(token);
+      } else if (token === ')') {
+        // 弹出直到遇到左括号
+        while (operators.length > 0 && operators[operators.length - 1] !== '(') {
+          output.push(operators.pop()!);
+        }
+        operators.pop(); // 弹出 '('
+      } else if (precedence[token] !== undefined) {
+        // 运算符
+        while (
+          operators.length > 0 &&
+            operators[operators.length - 1] !== '(' &&
+            precedence[operators[operators.length - 1]] >= precedence[token]
+        ) {
+          output.push(operators.pop()!);
+        }
+        operators.push(token);
+      }
+    }
+
+    // 弹出剩余的运算符
+    while (operators.length > 0) {
+      output.push(operators.pop()!);
+    }
+
+    return output;
+  }
+
+  /**
+   * 计算逆波兰表达式
+   */
+  calculateRPN(rpn: string[]): number {
+    const stack: number[] = [];
+
+    for (let token of rpn) {
+      if (!isNaN(Number(token))) {
+        stack.push(parseFloat(token));
+      } else {
+        const b = stack.pop()!;
+        const a = stack.pop()!;
+
+        switch (token) {
+          case '+':
+            stack.push(a + b);
+            break;
+          case '-':
+            stack.push(a - b);
+            break;
+          case '*':
+            stack.push(a * b);
+            break;
+          case '/':
+            if (b === 0) {
+              throw new Error('除数不能为 0');
+            }
+            stack.push(a / b);
+            break;
+          default:
+            throw new Error(`未知运算符: ${token}`);
+        }
+      }
+    }
+
+    if (stack.length !== 1) {
+      throw new Error('表达式错误');
+    }
+
+    return stack[0];
   }
 
   formatDate(date: Date): string {
@@ -370,7 +569,8 @@ struct FormPage {
     }
 
     for (let field of this.currentTable.fields) {
-      if (field.is_editable === '1' && field.required === 1) {
+      // ✅ 只验证可见且可编辑的必填字段
+      if (this.isFieldVisible(field) && field.is_editable === '1' && field.required === 1) {
         const value = this.getFieldValue(field.field_name);
         if (!value || value.trim() === '') {
           this.toastController.show(`请填写 ${field.annotation}`);
@@ -428,7 +628,10 @@ struct FormPage {
 
       // 检查当前值是否匹配指定的选项（索引从 1 开始）
       const targetOption = options[controlOptionIndex - 1];
-      if (controlFieldValue === targetOption.value) {
+
+      // 支持多选（逗号分隔）
+      const selectedValues = controlFieldValue.split(',').map(v => v.trim());
+      if (selectedValues.includes(targetOption.value)) {
         return true;
       }
     }
@@ -513,7 +716,9 @@ struct FormPage {
       if (saveSuccess) {
         console.log('✅ 本地保存成功');
         this.toastController.show('✅ 保存成功，可在记录页面上传');
-        this.scheduleBack(1500);
+
+        // ✅ 修复：确保返回上一页
+        router.back();
       } else {
         throw new Error('本地保存失败');
       }
@@ -550,11 +755,7 @@ struct FormPage {
             .backgroundColor(Color.Transparent)
             .fontColor('#333333')
             .onClick(() => {
-              try {
-                router.back();
-              } catch (e) {
-                console.error('返回失败:', e);
-              }
+              router.back();
             })
 
           Text(this.currentTable?.step_name || '表单填写')
@@ -597,7 +798,6 @@ struct FormPage {
               // 表单信息卡片
               Column() {
                 Row() {
-                  // ✅ 添加患者姓名
                   Text('患者姓名')
                     .fontSize(14)
                     .fontColor('#999999')
@@ -984,7 +1184,6 @@ struct FormPage {
 
   @Builder
   SelectFieldInline(field: FormField) {
-    // ✅ 修改这里：Column 改为 Flex，设置 wrap
     Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
       ForEach(this.getFieldOptions(field), (option: OptionItem, index: number) => {
         Row() {
@@ -1005,8 +1204,8 @@ struct FormPage {
             })
         }
         .height(36)
-        .padding({ left: 4, right: 12 })  // ✅ 添加右边距
-        .margin({ right: 8, bottom: 8 })   // ✅ 添加间距
+        .padding({ left: 4, right: 12 })
+        .margin({ right: 8, bottom: 8 })
       }, (option: OptionItem, index: number) => `${field.field_name}_radio_${index}`)
     }
     .width('100%')
@@ -1019,7 +1218,6 @@ struct FormPage {
 
   @Builder
   CheckboxFieldInline(field: FormField) {
-    // ✅ 修改这里：Column 改为 Flex，设置 wrap
     Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
       ForEach(this.getFieldOptions(field), (option: OptionItem, index: number) => {
         Row() {
@@ -1039,8 +1237,8 @@ struct FormPage {
             })
         }
         .height(36)
-        .padding({ left: 4, right: 12 })  // ✅ 添加右边距
-        .margin({ right: 8, bottom: 8 })   // ✅ 添加间距
+        .padding({ left: 4, right: 12 })
+        .margin({ right: 8, bottom: 8 })
       }, (option: OptionItem, index: number) => `${field.field_name}_checkbox_${index}`)
     }
     .width('100%')

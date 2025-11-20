@@ -1,27 +1,24 @@
-
 /**
- * 任务列表 Tab - 带同步检查
- *
- * 功能：
- * - 同步前检查是否有未上传的本地数据
- * - 如果有未上传数据，弹出提示对话框
- * - 引导用户先上传数据
- * percent: 整个任务的完成百分比（如 3 张表完成 2 张 = 67%）
- * task.state: 任务状态（0=待执行，1=进行中，2=已完成）
- * table.state: 表格填写状态（0=未填写，1=已填写）
+ * 任务列表 Tab - 带同步检查 + 项目筛选 + 知情同意书标识
  */
 import router from '@ohos.router';
 import storage, { StorageKeys } from '../utils/storage';
 import http from '../utils/http';
 import { FollowUpTask, TaskListRequest } from '../types';
 import { CustomToast, ToastController } from '../components/CustomToast';
-import promptAction from '@ohos.promptAction';
+
+// ✅ 项目选项接口
+interface ProjectOption {
+  id: number;
+  name: string;
+}
 
 @Component
 export default struct MissionTab {
   @Prop currentUsername: string = '';
   @Prop currentToken: string = '';
-  @Prop filterType: number = 0;
+  @Link filterType: number;  // ✅ 改为 @Link，接收父组件传递的筛选
+
   @State tasks: FollowUpTask[] = [];
   @State loading: boolean = false;
   @State searchText: string = '';
@@ -31,7 +28,11 @@ export default struct MissionTab {
 
   @State currentFilterIndex: number = 0;
 
-  // ✅ 对话框控制
+  // ✅ 项目筛选相关
+  @State projectList: ProjectOption[] = [];
+  @State selectedProjectId: number = 0;  // 0 = 全部项目
+
+  // 对话框控制
   @State showSyncConfirmDialog: boolean = false;
   @State pendingUploadCount: number = 0;
 
@@ -50,12 +51,24 @@ export default struct MissionTab {
   }
 
   /**
-   * 从本地加载任务列表
+   * ✅ 页面显示时刷新数据（解决详情页返回后状态不更新的问题）
+   */
+  async onPageShow() {
+    console.log('========== MissionTab 显示 ==========');
+    // 只有当已经加载过数据时才重新加载，避免首次重复加载
+    if (this.tasks.length > 0 || !this.loading) {
+      await this.loadTasks();
+    }
+  }
+
+  /**
+   * ✅ 从本地加载任务列表
    */
   async loadTasks() {
     try {
       console.log('从本地加载任务列表...');
-      this.loading = true;
+      // 注意：这里不设置 this.loading = true，以免每次返回都闪烁 loading
+      // 仅在首次加载或显式刷新时控制 loading
 
       let tasksStr: string = await storage.getUserData(
         this.currentUsername,
@@ -66,29 +79,38 @@ export default struct MissionTab {
         this.tasks = JSON.parse(tasksStr) as FollowUpTask[];
         console.log('✅ 从本地加载任务:', this.tasks.length, '条');
 
-        // 打印任务信息，方便调试
-        this.tasks.forEach((task, index) => {
-          console.log(`任务 ${index + 1}:`, task.patient_no);
-          console.log('  - 任务状态 (state):', task.state);
-          console.log('  - 完成进度 (percent):', task.percent);
-          if (task.project && task.project.tables) {
-            console.log('  - 表格数量:', task.project.tables.length);
-            task.project.tables.forEach((table, i) => {
-              console.log(`    表格 ${i + 1}: ${table.step_name}, state=${table.state}`);
-            });
-          }
-        });
+        // ✅ 提取项目列表
+        this.extractProjects();
       } else {
         console.log('本地暂无任务数据');
         this.tasks = [];
+        this.projectList = [{ id: 0, name: '全部项目' }];
       }
 
-      this.loading = false;
     } catch (e) {
       console.error('❌ 加载任务失败:', e);
       this.tasks = [];
-      this.loading = false;
     }
+  }
+
+  /**
+   * ✅ 提取项目列表（去重）
+   */
+  extractProjects() {
+    const projectMap = new Map<number, string>();
+
+    this.tasks.forEach(task => {
+      if (!projectMap.has(task.project_id)) {
+        projectMap.set(task.project_id, task.project_name);
+      }
+    });
+
+    // 构建项目列表
+    this.projectList = [{ id: 0, name: '全部项目' }];
+
+    projectMap.forEach((name, id) => {
+      this.projectList.push({ id, name });
+    });
   }
 
   /**
@@ -125,7 +147,6 @@ export default struct MissionTab {
     try {
       let count = 0;
 
-      // 遍历所有任务，统计未上传的记录
       for (let task of this.tasks) {
         if (task.local_records) {
           const pendingRecords = task.local_records.filter(r => !r.is_uploaded);
@@ -182,15 +203,20 @@ export default struct MissionTab {
 
         // ✅ 如果不是强制同步，保留本地未上传的记录
         if (!forceSync) {
-          // 合并本地未上传的记录
           serverTasks.forEach(serverTask => {
             const localTask = this.tasks.find(t => t.id === serverTask.id);
-            if (localTask && localTask.local_records) {
-              // 只保留未上传的记录
-              const pendingRecords = localTask.local_records.filter(r => !r.is_uploaded);
-              if (pendingRecords.length > 0) {
-                serverTask.local_records = pendingRecords;
-                console.log(`任务 ${serverTask.id} 保留了 ${pendingRecords.length} 条未上传记录`);
+            if (localTask) {
+              // 保留未上传记录
+              if (localTask.local_records) {
+                const pendingRecords = localTask.local_records.filter(r => !r.is_uploaded);
+                if (pendingRecords.length > 0) {
+                  serverTask.local_records = pendingRecords;
+                  console.log(`任务 ${serverTask.id} 保留了 ${pendingRecords.length} 条未上传记录`);
+                }
+              }
+              // ✅ 保留本地已签署但未同步的知情同意书（如果有这种情况）
+              if (localTask.consent_signature && !serverTask.consent_signature) {
+                serverTask.consent_signature = localTask.consent_signature;
               }
             }
           });
@@ -198,6 +224,9 @@ export default struct MissionTab {
 
         // 更新状态
         this.tasks = serverTasks;
+
+        // ✅ 重新提取项目列表
+        this.extractProjects();
 
         // 保存到本地
         await storage.setUserData(
@@ -248,14 +277,11 @@ export default struct MissionTab {
 
     console.log('🔄 触发同步...');
 
-    // ✅ 检查是否有未上传的数据
     this.pendingUploadCount = await this.checkPendingUploads();
 
     if (this.pendingUploadCount > 0) {
-      // 显示确认对话框
       this.showSyncConfirmDialog = true;
     } else {
-      // 没有未上传数据，直接同步
       this.syncing = true;
       this.syncTasks(false);
     }
@@ -267,7 +293,7 @@ export default struct MissionTab {
   handleConfirmSync() {
     this.showSyncConfirmDialog = false;
     this.syncing = true;
-    this.syncTasks(true);  // 强制同步，覆盖本地数据
+    this.syncTasks(true);
   }
 
   /**
@@ -279,32 +305,32 @@ export default struct MissionTab {
   }
 
   /**
-   * 获取筛选后的任务列表
-   */
-  /**
-   * ✅ 获取筛选后的任务列表
+   * ✅ 获取筛选后的任务列表（支持项目筛选）
    */
   getFilteredTasks(): FollowUpTask[] {
     let filteredTasks = this.tasks;
 
-    // 1. 先按状态筛选
+    // 1. 按项目筛选
+    if (this.selectedProjectId !== 0) {
+      filteredTasks = filteredTasks.filter(task => task.project_id === this.selectedProjectId);
+    }
+
+    // 2. 按状态筛选
     if (this.currentFilterIndex === 1) {
-      // 待执行
       filteredTasks = filteredTasks.filter(task => task.state === 0);
     } else if (this.currentFilterIndex === 2) {
-      // 进行中
       filteredTasks = filteredTasks.filter(task => task.state === 1);
     } else if (this.currentFilterIndex === 3) {
-      // 已完成
       filteredTasks = filteredTasks.filter(task => task.state === 2);
     }
 
-    // 2. 再按搜索关键字筛选
+    // 3. 按搜索关键字筛选
     if (this.searchText) {
       const keyword = this.searchText.toLowerCase();
       filteredTasks = filteredTasks.filter(task =>
       task.patient_no.toLowerCase().includes(keyword) ||
       task.project_name.toLowerCase().includes(keyword) ||
+      task.name.toLowerCase().includes(keyword) ||
       task.creator.toLowerCase().includes(keyword)
       );
     }
@@ -314,7 +340,6 @@ export default struct MissionTab {
 
   /**
    * ✅ 获取任务状态文本
-   * state: 0=待执行，1=进行中，2=已完成
    */
   getStateText(state: number): string {
     switch (state) {
@@ -330,17 +355,15 @@ export default struct MissionTab {
    */
   getStateColor(state: number): string {
     switch (state) {
-      case 0: return '#FF6B00';  // 橙色：待执行
-      case 1: return '#1890FF';  // 蓝色：进行中
-      case 2: return '#52C41A';  // 绿色：已完成
+      case 0: return '#FF6B00';
+      case 1: return '#1890FF';
+      case 2: return '#52C41A';
       default: return '#999999';
     }
   }
 
   /**
    * ✅ 格式化百分比显示
-   * percent 是整个任务的完成百分比（字符串类型）
-   * 例如："0", "33.33", "67", "100"
    */
   getPercentText(percent: string): string {
     const percentNum = Number(percent) || 0;
@@ -349,25 +372,23 @@ export default struct MissionTab {
 
   /**
    * ✅ 获取百分比进度条颜色
-   * 根据整体完成度显示不同颜色
    */
   getPercentColor(percent: string): string {
     const percentNum = Number(percent) || 0;
 
     if (percentNum >= 100) {
-      return '#52C41A';  // 绿色：已完成 100%
+      return '#52C41A';
     } else if (percentNum >= 50) {
-      return '#1890FF';  // 蓝色：完成 50-99%
+      return '#1890FF';
     } else if (percentNum > 0) {
-      return '#FAAD14';  // 橙色：完成 1-49%
+      return '#FAAD14';
     } else {
-      return '#D9D9D9';  // 灰色：未开始 0%
+      return '#D9D9D9';
     }
   }
 
   /**
    * ✅ 获取任务的表格统计信息
-   * 返回：已完成数量/总数量
    */
   getTableStats(task: FollowUpTask): string {
     if (!task.project || !task.project.tables) {
@@ -390,7 +411,7 @@ export default struct MissionTab {
     router.pushUrl({
       url: 'pages/MissionPage',
       params: {
-        task: task,              // ✅ 传递完整任务对象
+        task: task,
         token: this.currentToken,
         username: this.currentUsername
       }
@@ -400,6 +421,47 @@ export default struct MissionTab {
       console.error('❌ 跳转失败:', err);
       this.toastController.show('打开失败');
     });
+  }
+
+  @Builder
+  ProjectSelector() {
+    Column() {
+      Text('项目筛选')
+        .fontSize(13)
+        .fontColor('#999999')
+        .margin({ bottom: 8 })
+        .alignSelf(ItemAlign.Start)
+
+      // ✅ 使用横向滚动的标签
+      Scroll() {
+        Row() {
+          ForEach(this.projectList, (project: ProjectOption, index: number) => {
+            Button(project.name)
+              .fontSize(13)
+              .height(32)
+              .padding({ left: 16, right: 16 })
+              .backgroundColor(this.selectedProjectId === project.id ? '#FF6B00' : '#FFFFFF')
+              .fontColor(this.selectedProjectId === project.id ? '#FFFFFF' : '#666666')
+              .borderRadius(16)
+              .border({
+                width: 1,
+                color: this.selectedProjectId === project.id ? '#FF6B00' : '#E5E5E5'
+              })
+              .margin({ right: 8 })
+              .onClick(() => {
+                this.selectedProjectId = project.id;
+                console.log('选择项目:', project.name);
+              })
+          })
+        }
+      }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, bottom: 8 })
+    .alignItems(HorizontalAlign.Start)
   }
 
   build() {
@@ -435,7 +497,10 @@ export default struct MissionTab {
         .padding(12)
         .backgroundColor('#F5F5F5')
 
-        // ✅ 新增：筛选标签栏
+        // ✅ 使用自定义项目选择器
+        this.ProjectSelector()
+
+        // ✅ 状态筛选标签栏
         Row() {
           Button('全部')
             .fontSize(14)
@@ -518,11 +583,11 @@ export default struct MissionTab {
               .fontSize(60)
               .margin({ bottom: 12 })
 
-            Text(this.searchText ? '没有找到相关任务' : '暂无任务')
+            Text(this.searchText || this.selectedProjectId !== 0 ? '没有找到相关任务' : '暂无任务')
               .fontSize(14)
               .fontColor('#999999')
 
-            if (!this.searchText) {
+            if (!this.searchText && this.selectedProjectId === 0) {
               Button('点击同步任务')
                 .fontSize(14)
                 .margin({ top: 20 })
@@ -543,7 +608,7 @@ export default struct MissionTab {
             ForEach(this.getFilteredTasks(), (task: FollowUpTask) => {
               ListItem() {
                 Column() {
-                  // 第一行：患者编号 + 任务状态标签
+                  // 第一行：患者编号 + 任务状态标签 + 知情同意书标签
                   Row() {
                     Text(task.patient_no)
                       .fontSize(16)
@@ -551,6 +616,17 @@ export default struct MissionTab {
                       .fontColor('#333333')
 
                     Blank()
+
+                    // ✅ 1. 添加知情同意书标签 (仅在已签署时显示)
+                    if (task.consent_signature) {
+                      Text('已签署')
+                        .fontSize(12)
+                        .fontColor('#FFFFFF')
+                        .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                        .backgroundColor('#52C41A') // 绿色
+                        .borderRadius(4)
+                        .margin({ right: 8 })
+                    }
 
                     Text(this.getStateText(task.state))
                       .fontSize(12)
@@ -562,7 +638,18 @@ export default struct MissionTab {
                   .width('100%')
                   .margin({ bottom: 8 })
 
-                  // 第二行：项目名称
+                  // 第二行：患者姓名（如果有）
+                  if (task.name) {
+                    Row() {
+                      Text(`患者：${task.name}`)
+                        .fontSize(14)
+                        .fontColor('#666666')
+                    }
+                    .width('100%')
+                    .margin({ bottom: 8 })
+                  }
+
+                  // 第三行：项目名称
                   Row() {
                     Text(`项目：${task.project_name}`)
                       .fontSize(14)
@@ -571,7 +658,7 @@ export default struct MissionTab {
                   .width('100%')
                   .margin({ bottom: 8 })
 
-                  // ✅ 第三行：任务完成进度（整体进度）
+                  // 任务完成进度
                   Column() {
                     Row() {
                       Text('任务进度')
@@ -580,7 +667,6 @@ export default struct MissionTab {
 
                       Blank()
 
-                      // 显示：已完成表格数/总表格数 + 百分比
                       Row() {
                         Text(`${this.getTableStats(task)} 表格`)
                           .fontSize(11)
@@ -598,14 +684,12 @@ export default struct MissionTab {
 
                     // 进度条
                     Stack() {
-                      // 背景
                       Row()
                         .width('100%')
                         .height(6)
                         .backgroundColor('#F0F0F0')
                         .borderRadius(3)
 
-                      // 进度（使用 percent 字段）
                       Row()
                         .width(`${task.percent}%`)
                         .height(6)
@@ -618,18 +702,15 @@ export default struct MissionTab {
                   .width('100%')
                   .margin({ bottom: 8 })
 
-                  // 第四行：创建人
+                  // 创建人和创建时间
                   Row() {
                     Text(`创建人：${task.creator}`)
                       .fontSize(12)
                       .fontColor('#999999')
-                  }
-                  .width('100%')
-                  .margin({ bottom: 4 })
 
-                  // 第五行：创建时间
-                  Row() {
-                    Text(`创建时间：${task.create_time}`)
+                    Blank()
+
+                    Text(task.create_time)
                       .fontSize(12)
                       .fontColor('#CCCCCC')
                   }
@@ -654,23 +735,20 @@ export default struct MissionTab {
       .width('100%')
       .height('100%')
 
-      // ✅ 同步确认对话框
+      // 同步确认对话框 (代码保持不变)
       if (this.showSyncConfirmDialog) {
         Column() {
           Column() {
-            // 警告图标
             Text('⚠️')
               .fontSize(48)
               .margin({ bottom: 16 })
 
-            // 标题
             Text('检测到本地未上传数据')
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
               .fontColor('#333333')
               .margin({ bottom: 12 })
 
-            // 消息
             Text(`您有 ${this.pendingUploadCount} 份表单数据尚未上传，同步会覆盖这些本地数据。建议先前往【记录】页面上传数据。`)
               .fontSize(14)
               .fontColor('#666666')
@@ -678,7 +756,6 @@ export default struct MissionTab {
               .lineHeight(22)
               .margin({ bottom: 24 })
 
-            // 按钮组
             Row() {
               Button('取消')
                 .fontSize(16)
@@ -725,7 +802,6 @@ export default struct MissionTab {
         .backgroundColor('rgba(0, 0, 0, 0.5)')
         .justifyContent(FlexAlign.Center)
         .onClick(() => {
-          // 点击背景关闭
           this.handleCancelSync();
         })
       }
