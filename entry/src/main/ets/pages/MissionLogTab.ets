@@ -1,53 +1,65 @@
 /**
- * 记录列表 Tab
+ * 记录列表 Tab - 按任务批量上传
  *
  * 功能：
  * - 显示所有本地保存的表单记录
  * - 筛选：全部/未上传/已上传
- * - 上传未同步的记录
+ * - 按任务批量上传数据（包含签名）
  * - 查看记录详情
  * - 删除记录
  */
 import router from '@ohos.router';
 import storage, { StorageKeys } from '../utils/storage';
-import { FollowUpTask, FormRecord, FormTable } from '../types';
+import {
+  FollowUpTask,
+  FormRecord,
+  FormTable,
+  BatchUploadMissionRequest,
+  UploadRecordItem,
+  BatchUploadResult,
+  UploadTaskResult
+} from '../types';
 import http from '../utils/http';
 import { CustomToast, ToastController } from '../components/CustomToast';
-import {SaveSubStepDataParams} from '../types/index';
 
 /**
- * ✅ 上传表单数据到服务器
+ * ✅ 批量上传任务数据
  */
-async function saveSubStepData(params: SaveSubStepDataParams): Promise<boolean> {
+async function batchUploadMission(request: BatchUploadMissionRequest): Promise<BatchUploadResult> {
   try {
-    const request :SaveSubStepDataParams = {
-      token: params.token,
-      table_name: params.table_name,
-      patientNo: params.patientNo,
-      multi_line: params.multi_line,
-      subStepId: params.subStepId,
-      data: params.data
-    };
+    console.log('📤 批量上传任务数据:', {
+      mission_id: request.mission_id,
+      patient_no: request.patient_no,
+      has_sign: !!request.sign,
+      records_count: request.records.length
+    });
 
-    console.log('📤 上传表单数据:', request);
-
-    let response = await http.post('/mobile/saveSubStepData.json', request);
-    console.log('上传响应 code:', response.code);
+    let response = await http.post('/mobile/batchUploadMission.json', request);
+    console.log('上传响应:', response);
 
     if (response.code === 0) {
-      console.log('✅ 表单上传成功');
-      return true;
+      return {
+        success: true,
+        message: response.message || '上传成功',
+        result: response.dataMap  // ✅ 明确处理 undefined
+      };
     } else {
-      console.error('❌ 表单上传失败:', response.message);
-      return false;
+      return {
+        success: false,
+        message: response.message || '上传失败',
+        result: response.dataMap  // ✅ 明确处理 undefined
+      };
     }
   } catch (err) {
     const e = err as Error;
-    console.error('❌ 表单上传异常:', e.message);
-    return false;
+    console.error('❌ 批量上传异常:', e.message);
+    return {
+      success: false,
+      message: '上传异常: ' + e.message,
+      result: undefined  // ✅ 明确返回 undefined
+    };
   }
 }
-
 /**
  * ✅ 记录项（包含任务信息）
  */
@@ -61,16 +73,21 @@ interface RecordItem {
 export default struct MissionLogTab {
   @Prop currentUsername: string = '';
   @Prop currentToken: string = '';
-  @Prop filterType: number = 0;
+  @Link filterType: number;
+
   @State records: RecordItem[] = [];
-  @State currentFilterIndex: number = 0;  // 0=全部，1=未上传，2=已上传
+  @State currentFilterIndex: number = 0;
   @State loading: boolean = false;
   @State uploading: boolean = false;
   @State toastController: ToastController = new ToastController();
 
-  // ✅ 删除确认对话框
+  // 删除确认对话框
   @State showDeleteDialog: boolean = false;
   @State recordToDelete: RecordItem | null = null;
+
+  // 签名缺失提示对话框
+  @State showSignatureMissingDialog: boolean = false;
+  @State missingSignatureTasks: FollowUpTask[] = [];
 
   async aboutToAppear() {
     console.log('========== MissionLogTab 加载 ==========');
@@ -85,7 +102,6 @@ export default struct MissionLogTab {
       this.loading = true;
       console.log('加载本地记录...');
 
-      // 1. 加载所有任务
       let tasksStr: string = await storage.getUserData(
         this.currentUsername,
         StorageKeys.FOLLOW_UP_TASKS
@@ -105,12 +121,10 @@ export default struct MissionLogTab {
       const tasks: FollowUpTask[] = JSON.parse(tasksStr);
       console.log('任务数量:', tasks.length);
 
-      // 2. 遍历任务，收集所有本地记录
       const allRecords: RecordItem[] = [];
 
       for (let task of tasks) {
         if (task.local_records && task.local_records.length > 0) {
-          // 为每个记录创建 RecordItem
           task.local_records.forEach(record => {
             allRecords.push({
               task: task,
@@ -121,7 +135,6 @@ export default struct MissionLogTab {
         }
       }
 
-      // 3. 按填写时间倒序排序（最新的在前面）
       allRecords.sort((a, b) => {
         const timeA = new Date(a.record.filled_time).getTime();
         const timeB = new Date(b.record.filled_time).getTime();
@@ -144,11 +157,11 @@ export default struct MissionLogTab {
    */
   getFilteredRecords(): RecordItem[] {
     switch (this.currentFilterIndex) {
-      case 1:  // 未上传
+      case 1:
         return this.records.filter(r => !r.record.is_uploaded);
-      case 2:  // 已上传
+      case 2:
         return this.records.filter(r => r.record.is_uploaded);
-      default:  // 全部
+      default:
         return this.records;
     }
   }
@@ -156,7 +169,6 @@ export default struct MissionLogTab {
   /**
    * ✅ 获取表单信息
    */
-
   getTableInfo(record: RecordItem): FormTable | undefined {
     if (!record.task.project || !record.task.project.tables) {
       return undefined;
@@ -181,57 +193,165 @@ export default struct MissionLogTab {
   }
 
   /**
-   * ✅ 上传单条记录
+   * ✅ 检查任务是否有签名
    */
-  async uploadRecord(item: RecordItem): Promise<boolean> {
-    try {
-      const table = this.getTableInfo(item);
-      if (!table) {
-        console.error('表单不存在:', item.record.table_id);
-        return false;
-      }
-
-      console.log('开始上传记录:', table.table_name);
-
-      // 调用接口上传数据
-      const params: SaveSubStepDataParams = {
-        token: this.currentToken,
-        table_name: table.table_name,
-        patientNo: item.task.patient_no,
-        multi_line: table.multi_line,
-        subStepId: item.record.step_id,
-        data: JSON.stringify(item.record.data)
-      };
-
-      const uploadSuccess = await saveSubStepData(params);
-
-      if (uploadSuccess) {
-        // 标记为已上传
-        await storage.markRecordAsUploaded(
-          this.currentUsername,
-          item.taskId,
-          item.record.table_id
-        );
-        console.log('✅ 记录上传成功');
-        return true;
-      }
-
-      console.error('❌ 记录上传失败');
-      return false;
-    } catch (err) {
-      const e = err as Error;
-      console.error('❌ 上传记录异常:', e.message);
+  hasSignature(task: FollowUpTask): boolean {
+    if (!task.consent_signature) {
       return false;
     }
+
+    // 检查签名对象是否有效
+    const signature = task.consent_signature;
+
+    // 检查是否有签名图片
+    if (!signature.signature_image || signature.signature_image.trim().length === 0) {
+      return false;
+    }
+
+    return true;
   }
 
   /**
-   * ✅ 上传所有未同步的记录
+   * ✅ 按任务分组未上传的记录
+   */
+  groupRecordsByTask(): Map<number, RecordItem[]> {
+    const unsyncedRecords = this.records.filter(r => !r.record.is_uploaded);
+    const grouped = new Map<number, RecordItem[]>();
+
+    unsyncedRecords.forEach(item => {
+      const taskId = item.taskId;
+      if (!grouped.has(taskId)) {
+        grouped.set(taskId, []);
+      }
+      grouped.get(taskId)!.push(item);
+    });
+
+    return grouped;
+  }
+
+  /**
+   * ✅ 上传单个任务的所有记录
+   */
+  async uploadTaskRecords(taskId: number, items: RecordItem[]): Promise<UploadTaskResult> {
+    try {
+      const task = items[0].task;
+
+      console.log(`\n📤 开始上传任务 [${task.patient_no}] 的 ${items.length} 条记录...`);
+
+      // 构建上传记录列表
+      const uploadRecords: UploadRecordItem[] = [];
+
+      for (let item of items) {
+        const table = this.getTableInfo(item);
+        if (!table) {
+          console.error('❌ 表单不存在:', item.record.table_id);
+          continue;
+        }
+
+        uploadRecords.push({
+          table_name: table.table_name,
+          table_id: item.record.table_id,
+          sub_step_id: item.record.step_id,
+          multi_line: table.multi_line === 1 ? "1" : "0",
+          data: JSON.stringify(item.record.data)
+        });
+      }
+
+      if (uploadRecords.length === 0) {
+        return { success: false, message: '没有有效的表单数据' };
+      }
+
+      // ✅ 提取签名信息
+      let signatureImage: string | undefined = undefined;
+      let signatureTime: string | undefined = undefined;
+
+      if (task.consent_signature) {
+        signatureImage = task.consent_signature.signature_image;
+        signatureTime = task.consent_signature.signature_time;
+      }
+
+      // ✅ 计算完成度
+      const percent = task.percent || '0%';
+
+      // ✅ 确定任务状态
+      // 如果有上传记录，状态至少应该是"进行中"
+      let state = task.state;
+      if (state === 0 && uploadRecords.length > 0) {
+        state = 1;  // 设置为进行中
+      }
+
+      // 调用批量上传接口
+      const request: BatchUploadMissionRequest = {
+        token: this.currentToken,
+        mission_id: taskId,
+        patient_no: task.patient_no,
+        sign: signatureImage,      // ✅ 签名图片
+        sign_at: signatureTime,    // ✅ 签名时间
+        percent: percent,          // ✅ 完成度
+        state: state,              // ✅ 任务状态
+        records: uploadRecords
+      };
+
+      console.log('上传请求参数:', {
+        mission_id: taskId,
+        patient_no: task.patient_no,
+        has_sign: !!signatureImage,
+        sign_at: signatureTime,
+        percent: percent,
+        state: state,
+        records_count: uploadRecords.length
+      });
+
+      const result: BatchUploadResult = await batchUploadMission(request);
+
+      if (result.success) {
+        // 标记所有记录为已上传
+        for (let item of items) {
+          await storage.markRecordAsUploaded(
+            this.currentUsername,
+            taskId,
+            item.record.table_id
+          );
+        }
+
+        const successCount = result.result?.success_count || uploadRecords.length;
+        console.log(`✅ 任务 [${task.patient_no}] 上传成功: ${successCount}/${uploadRecords.length}`);
+
+        return {
+          success: true,
+          message: `成功 ${successCount}/${uploadRecords.length}`
+        };
+      } else {
+        const failCount = result.result?.fail_count || 0;
+        console.error(`❌ 任务 [${task.patient_no}] 上传失败: ${result.message}`);
+
+        return {
+          success: false,
+          message: result.message + (failCount > 0 ? ` (失败${failCount}条)` : '')
+        };
+      }
+
+    } catch (err) {
+      const e = err as Error;
+      console.error('❌ 上传任务记录异常:', e.message);
+      return {
+        success: false,
+        message: '上传异常: ' + e.message
+      };
+    }
+  }
+  /**
+   * ✅ 上传所有未同步的记录（按任务批量上传）
+   */
+  /**
+   * ✅ 上传所有未同步的记录（按任务批量上传）
+   * - 自动跳过未签名的任务
+   * - 上传完成后提示被跳过的任务
    */
   async uploadRecords() {
-    const unsyncedRecords = this.records.filter(r => !r.record.is_uploaded);
+    const groupedRecords = this.groupRecordsByTask();
 
-    if (unsyncedRecords.length === 0) {
+    if (groupedRecords.size === 0) {
       this.toastController.show('没有需要上传的记录');
       return;
     }
@@ -248,27 +368,64 @@ export default struct MissionLogTab {
       return;
     }
 
+    // ✅ 分类：已签名和未签名的任务
+    const unsignedTasks: FollowUpTask[] = [];
+    const signedEntries: Array<[number, RecordItem[]]> = [];
+    const entries = Array.from(groupedRecords.entries());
+
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const taskId = entry[0];
+      const items = entry[1];
+      const task = items[0].task;
+
+      if (!this.hasSignature(task)) {
+        unsignedTasks.push(task);
+        console.log(`⚠️ 跳过未签名任务: [${task.patient_no}] ${task.name}`);
+      } else {
+        signedEntries.push([taskId, items]);
+      }
+    }
+
+    // ✅ 如果全部未签名，直接提示
+    if (signedEntries.length === 0) {
+      if (unsignedTasks.length > 0) {
+        this.missingSignatureTasks = unsignedTasks;
+        this.showSignatureMissingDialog = true;
+      } else {
+        this.toastController.show('没有需要上传的记录');
+      }
+      return;
+    }
+
+    // ✅ 如果有部分未签名，先提示
+    if (unsignedTasks.length > 0) {
+      console.log(`⚠️ 检测到 ${unsignedTasks.length} 个任务未签署知情同意书，将跳过`);
+      this.toastController.show(`检测到 ${unsignedTasks.length} 个未签名任务，将跳过并上传其他任务`);
+    }
+
+    // 开始上传已签名的任务
     try {
       this.uploading = true;
-      console.log(`开始上传 ${unsyncedRecords.length} 条记录...`);
+      console.log(`\n========== 开始批量上传 ${signedEntries.length} 个已签名任务 ==========`);
 
-      let successCount = 0;
-      let failCount = 0;
+      let successTasks = 0;
+      let failTasks = 0;
+      const failedTaskNames: string[] = [];
 
-      for (let item of unsyncedRecords) {
-        try {
-          const success = await this.uploadRecord(item);
+      for (let i = 0; i < signedEntries.length; i++) {
+        const entry = signedEntries[i];
+        const taskId = entry[0];
+        const items = entry[1];
+        const task = items[0].task;
 
-          if (success) {
-            successCount++;
-            console.log(`✅ 上传成功: ${item.task.patient_no} - ${this.getTableName(item)}`);
-          } else {
-            failCount++;
-          }
+        const result = await this.uploadTaskRecords(taskId, items);
 
-        } catch (uploadError) {
-          failCount++;
-          console.error(`❌ 上传失败:`, uploadError);
+        if (result.success) {
+          successTasks++;
+        } else {
+          failTasks++;
+          failedTaskNames.push(`${task.patient_no}: ${result.message}`);
         }
       }
 
@@ -277,18 +434,64 @@ export default struct MissionLogTab {
       // 重新加载记录
       await this.loadRecords();
 
-      // 显示结果
-      if (failCount === 0) {
-        this.toastController.show(`✅ 全部上传成功（${successCount} 条）`);
+      // ✅ 构建结果消息
+      let resultMessage = '';
+
+      if (failTasks === 0) {
+        resultMessage = `✅ 上传成功 ${successTasks} 个任务`;
       } else {
-        this.toastController.show(`上传完成：成功 ${successCount} 条，失败 ${failCount} 条`);
+        resultMessage = `上传完成：成功 ${successTasks}，失败 ${failTasks}`;
+        console.error('❌ 失败的任务:', failedTaskNames);
+      }
+
+      if (unsignedTasks.length > 0) {
+        resultMessage += `\n⚠️ 跳过 ${unsignedTasks.length} 个未签名任务`;
+      }
+
+      this.toastController.show(resultMessage);
+
+      // ✅ 如果有未签名任务，延迟显示提示对话框
+      if (unsignedTasks.length > 0) {
+        setTimeout(() => {
+          this.missingSignatureTasks = unsignedTasks;
+          this.showSignatureMissingDialog = true;
+        }, 2000);  // 2秒后显示
       }
 
     } catch (e) {
-      console.error('❌ 上传异常:', e);
-      this.toastController.show('上传失败');
+      console.error('❌ 批量上传异常:', e);
+      this.toastController.show('上传失败，请重试');
       this.uploading = false;
     }
+  }
+
+  /**
+   * ✅ 跳转到任务详情页补充签名
+   */
+  goToSignature() {
+    if (!this.missingSignatureTasks || this.missingSignatureTasks.length === 0) {
+      return;
+    }
+
+    this.showSignatureMissingDialog = false;
+
+    // 跳转到第一个未签名的任务
+    const task = this.missingSignatureTasks[0];
+
+    router.pushUrl({
+      url: 'pages/MissionPage',
+      params: {
+        task: task,
+        token: this.currentToken,
+        username: this.currentUsername,
+        showSignature: true
+      }
+    }).then(() => {
+      console.log('✅ 跳转到签名页');
+    }).catch((err: Error) => {
+      console.error('❌ 跳转失败:', err);
+      this.toastController.show('跳转失败');
+    });
   }
 
   /**
@@ -297,7 +500,6 @@ export default struct MissionLogTab {
   handleRecordClick(item: RecordItem) {
     console.log('查看记录:', item.task.patient_no, '-', this.getTableName(item));
 
-    // 跳转到记录详情页
     router.pushUrl({
       url: 'pages/RecordDetailPage',
       params: {
@@ -333,7 +535,6 @@ export default struct MissionLogTab {
     try {
       console.log('删除记录:', this.recordToDelete.task.patient_no, '-', this.getTableName(this.recordToDelete));
 
-      // 从存储中删除
       await storage.deleteFormRecord(
         this.currentUsername,
         this.recordToDelete.taskId,
@@ -341,8 +542,6 @@ export default struct MissionLogTab {
       );
 
       this.toastController.show('✅ 删除成功');
-
-      // 重新加载记录
       await this.loadRecords();
 
       this.showDeleteDialog = false;
@@ -461,7 +660,6 @@ export default struct MissionLogTab {
             ForEach(this.getFilteredRecords(), (item: RecordItem) => {
               ListItem() {
                 Column() {
-                  // 第一行：患者姓名 + 患者编号 + 上传状态
                   Row() {
                     Column() {
                       Text(item.task.name || '未知患者')
@@ -478,17 +676,28 @@ export default struct MissionLogTab {
 
                     Blank()
 
-                    Text(item.record.is_uploaded ? '✓ 已上传' : '⊙ 未上传')
-                      .fontSize(12)
-                      .fontColor(item.record.is_uploaded ? '#52C41A' : '#FFFFFF')
-                      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                      .backgroundColor(item.record.is_uploaded ? '#52C41A20' : '#FF6B0020')
-                      .borderRadius(4)
+                    Row() {
+                      if (!this.hasSignature(item.task)) {
+                        Text('未签名')
+                          .fontSize(11)
+                          .fontColor('#FF6B00')
+                          .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                          .backgroundColor('#FF6B0015')
+                          .borderRadius(3)
+                          .margin({ right: 6 })
+                      }
+
+                      Text(item.record.is_uploaded ? '✓ 已上传' : '⊙ 未上传')
+                        .fontSize(12)
+                        .fontColor(item.record.is_uploaded ? '#52C41A' : '#FF6B00')
+                        .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                        .backgroundColor(item.record.is_uploaded ? '#52C41A20' : '#FF6B0020')
+                        .borderRadius(4)
+                    }
                   }
                   .width('100%')
                   .margin({ bottom: 8 })
 
-                  // 第二行：项目名称
                   Row() {
                     Text(`项目：${item.task.project_name || '未知项目'}`)
                       .fontSize(14)
@@ -497,7 +706,6 @@ export default struct MissionLogTab {
                   .width('100%')
                   .margin({ bottom: 4 })
 
-                  // 第三行：表单名称
                   Row() {
                     Text(`表单：${this.getTableName(item)}`)
                       .fontSize(14)
@@ -506,7 +714,6 @@ export default struct MissionLogTab {
                   .width('100%')
                   .margin({ bottom: 4 })
 
-                  // 第四行：填写时间
                   Row() {
                     Text(`填写时间：${item.record.filled_time}`)
                       .fontSize(12)
@@ -522,7 +729,6 @@ export default struct MissionLogTab {
                   this.handleRecordClick(item);
                 })
                 .gesture(
-                  // ✅ 长按显示删除选项
                   LongPressGesture({ repeat: false })
                     .onAction(() => {
                       this.handleRecordLongPress(item);
@@ -541,18 +747,105 @@ export default struct MissionLogTab {
       .height('100%')
       .backgroundColor('#F5F5F5')
 
-      // ✅ 删除确认对话框
+      // ✅ 签名缺失提示对话框
+      if (this.showSignatureMissingDialog && this.missingSignatureTasks.length > 0) {
+        Column() {
+          Column() {
+            Text('⚠️')
+              .fontSize(48)
+              .margin({ bottom: 16 })
+
+            Text('需要先签署知情同意书')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#333333')
+              .margin({ bottom: 12 })
+
+            if (this.missingSignatureTasks.length === 1) {
+              Text(`患者【${this.missingSignatureTasks[0].name || this.missingSignatureTasks[0].patient_no}】的随访任务尚未签署知情同意书。`)
+                .fontSize(14)
+                .fontColor('#666666')
+                .textAlign(TextAlign.Center)
+                .lineHeight(22)
+                .margin({ bottom: 8 })
+            } else {
+              Text(`有 ${this.missingSignatureTasks.length} 个随访任务尚未签署知情同意书。`)
+                .fontSize(14)
+                .fontColor('#666666')
+                .textAlign(TextAlign.Center)
+                .lineHeight(22)
+                .margin({ bottom: 8 })
+            }
+
+            Text('请先前往任务详情页完成签名后再上传数据。')
+              .fontSize(14)
+              .fontColor('#666666')
+              .textAlign(TextAlign.Center)
+              .lineHeight(22)
+              .margin({ bottom: 24 })
+
+            Row() {
+              Button('取消')
+                .fontSize(16)
+                .fontColor('#333333')
+                .backgroundColor('#FFFFFF')
+                .border({
+                  width: 1,
+                  color: '#E5E5E5'
+                })
+                .width('48%')
+                .height(44)
+                .borderRadius(8)
+                .onClick(() => {
+                  this.showSignatureMissingDialog = false;
+                  this.missingSignatureTasks = [];
+                })
+
+              Button('去签名')
+                .fontSize(16)
+                .fontColor('#FFFFFF')
+                .backgroundColor('#FF6B00')
+                .width('48%')
+                .height(44)
+                .borderRadius(8)
+                .onClick(() => {
+                  this.goToSignature();
+                })
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.SpaceBetween)
+          }
+          .width('85%')
+          .padding(24)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(16)
+          .shadow({
+            radius: 16,
+            color: '#00000040',
+            offsetX: 0,
+            offsetY: 4
+          })
+        }
+        .width('100%')
+        .height('100%')
+        .backgroundColor('rgba(0, 0, 0, 0.5)')
+        .justifyContent(FlexAlign.Center)
+        .onClick(() => {
+          this.showSignatureMissingDialog = false;
+          this.missingSignatureTasks = [];
+        })
+      }
+
+      // 删除确认对话框
       if (this.showDeleteDialog && this.recordToDelete) {
         Column() {
           Column() {
-            // 标题
             Text('确认删除')
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
               .fontColor('#333333')
               .margin({ bottom: 16 })
 
-            // 消息
             Text(`确定要删除这条记录吗？`)
               .fontSize(14)
               .fontColor('#666666')
@@ -569,7 +862,6 @@ export default struct MissionLogTab {
               .fontColor('#999999')
               .margin({ bottom: 24 })
 
-            // 按钮组
             Row() {
               Button('取消')
                 .fontSize(16)
@@ -616,7 +908,6 @@ export default struct MissionLogTab {
         .backgroundColor('rgba(0, 0, 0, 0.5)')
         .justifyContent(FlexAlign.Center)
         .onClick(() => {
-          // 点击背景关闭
           this.cancelDelete();
         })
       }

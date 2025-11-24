@@ -35,6 +35,8 @@ struct ConsentPage {
   private drawPaths: DrawPath[] = [];
   private currentPath: DrawPath | null = null;
 
+  private uiContext: UIContext | null = null;
+
   // ✅ Canvas 尺寸
   private canvasWidth: number = 0;
   private canvasHeight: number = 0;
@@ -43,7 +45,7 @@ struct ConsentPage {
     console.log('========== ConsentPage 加载 ==========');
 
     const params = router.getParams() as Record<string, Object>;
-
+    this.uiContext = this.getUIContext();
     if (params && params['task']) {
       this.currentTask = params['task'] as FollowUpTask;
     }
@@ -285,7 +287,9 @@ struct ConsentPage {
       // 延迟返回
       setTimeout(() => {
         try {
-          router.back();
+          if (this.uiContext) {
+            this.uiContext.getRouter().back();
+          }
         } catch (e) {
           console.error('返回失败:', e);
         }

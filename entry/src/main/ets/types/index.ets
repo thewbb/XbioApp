@@ -217,6 +217,14 @@ export interface FollowUpTask {
   consent_signature?: ConsentSignature;
 }
 
+export interface ConsentSignature {
+  signature_image: string;      // 签名图片 Base64
+  signature_time: string;        // 签名时间
+  patient_name: string;          // 患者姓名
+  patient_no: string;            // 患者编号
+  signature_paths?: string;      // ✅ 新增：签名路径数据
+}
+
 // 任务列表请求
 export interface TaskListRequest {
   token: string;
@@ -269,11 +277,60 @@ export interface SaveSubStepDataParams {
   data: string;  // JSON 字符串
 }
 
-export interface ConsentSignature {
-  signature_image: string;      // 签名图片 Base64
-  signature_time: string;        // 签名时间
-  patient_name: string;          // 患者姓名
-  patient_no: string;            // 患者编号
-  signature_paths?: string;      // ✅ 新增：签名路径数据
+/**
+ * ✅ 批量上传数据统计
+ */
+export interface BatchUploadDataMap {
+  total?: number;
+  success_count?: number;
+  fail_count?: number;
+  failed_tables?: string[];
 }
 
+/**
+ * ✅ 批量上传响应
+ */
+export interface BatchUploadMissionResponse {
+  code: number;
+  message: string;
+  dataMap?: BatchUploadDataMap;  // ✅ 使用独立的接口
+}
+
+/**
+ * ✅ 批量上传结果
+ */
+export interface BatchUploadResult {
+  success: boolean;
+  message: string;
+  result?: BatchUploadDataMap;  // ✅ 使用独立的接口
+}
+
+/**
+ * 批量上传任务数据请求
+ */
+export interface BatchUploadMissionRequest {
+  token: string;
+  mission_id: number;
+  patient_no: string;
+  sign?: string;
+  sign_at?: string;           // ✅ 新增：签名时间
+  percent?: string;           // ✅ 新增：完成度
+  state?: number;             // ✅ 新增：任务状态
+  records: UploadRecordItem[];
+}
+
+/**
+ * 单条上传记录
+ */
+export interface UploadRecordItem {
+  table_name: string;
+  table_id: number;
+  sub_step_id: number;
+  multi_line: string;
+  data: string;
+}
+
+export interface UploadTaskResult {
+  success: boolean;
+  message: string;
+}

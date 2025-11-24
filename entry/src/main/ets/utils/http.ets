@@ -7,7 +7,7 @@ import storage from './storage';
 
 class HttpUtil {
   private token: string = '';
-  private baseUrl: string = 'http://192.168.48.87:8080/Xbiosms_war_exploded';  // 默认值
+  private baseUrl: string = 'http://127.0.0.1:8080/Xbiosms_war_exploded';  // 默认值
 
   /**
    * ✅ 初始化 - 加载服务器地址
