@@ -1,5 +1,5 @@
 /**
- * 主页 Tab - 数据概览和项目列表
+ * 主页 Tab - 数据概览和项目列表（带刷新支持）
  */
 import { UserInfo, FollowUpTask } from '../types';
 import storage, { StorageKeys } from '../utils/storage';
@@ -30,6 +30,12 @@ export default struct MainTab {
   @Link missionFilterType: number;
   @Link logFilterType: number;
 
+  // ✅ 新增：监听刷新标志
+  @Prop refreshFlag: number = 0;
+
+  // ✅ 用于检测 refreshFlag 变化
+  private lastRefreshFlag: number = 0;
+
   @State totalStats: Statistics = {
     pending: 0,
     inProgress: 0,
@@ -44,7 +50,19 @@ export default struct MainTab {
   async aboutToAppear() {
     console.log('========== MainTab 加载 ==========');
     this.updateCurrentDate();
+    this.lastRefreshFlag = this.refreshFlag;
     await this.loadStatistics();
+  }
+
+  /**
+   * ✅ 监听 refreshFlag 变化
+   */
+  async aboutToUpdate() {
+    if (this.refreshFlag !== this.lastRefreshFlag && this.refreshFlag > 0) {
+      console.log('🔄 MainTab 检测到刷新标志变化:', this.lastRefreshFlag, '→', this.refreshFlag);
+      this.lastRefreshFlag = this.refreshFlag;
+      await this.loadStatistics();
+    }
   }
 
   /**
@@ -66,13 +84,19 @@ export default struct MainTab {
    */
   async loadStatistics() {
     try {
+      console.log('🔄 MainTab 开始刷新数据...');
       this.loading = true;
+
+      // 更新日期
+      this.updateCurrentDate();
 
       // 从本地存储获取任务数据
       let tasksStr = await storage.getUserData(this.currentUsername, StorageKeys.FOLLOW_UP_TASKS);
 
       if (!tasksStr) {
         console.log('⚠️ 暂无任务数据');
+        this.totalStats = { pending: 0, inProgress: 0, notUploaded: 0, uploaded: 0 };
+        this.projectStats = [];
         this.loading = false;
         return;
       }
@@ -92,15 +116,13 @@ export default struct MainTab {
 
       // 遍历统计
       tasks.forEach((task, index) => {
-        // ✅ 确保 state 是数字类型（可能从服务器返回的是字符串）
+        // ✅ 确保 state 是数字类型
         let taskState = Number(task.state);
 
         console.log(`任务 ${index + 1}:`, {
           id: task.id,
           patient_no: task.patient_no,
           state: taskState,
-          原始state: task.state,
-          state类型: typeof task.state,
           local_records: task.local_records?.length || 0
         });
 
@@ -109,13 +131,11 @@ export default struct MainTab {
         // 1. 待随访（state === 0）
         if (taskState === 0) {
           this.totalStats.pending++;
-          console.log(`  ✅ 待随访 +1，当前总数: ${this.totalStats.pending}`);
         }
 
         // 2. 进行中（state === 1）
         else if (taskState === 1) {
           this.totalStats.inProgress++;
-          console.log(`  ✅ 进行中 +1，当前总数: ${this.totalStats.inProgress}`);
         }
 
         // 3. 已完成（state === 2）
@@ -127,7 +147,6 @@ export default struct MainTab {
 
           if (allUploaded) {
             this.totalStats.uploaded++;
-            console.log(`  ✅ 已完成 +1，当前总数: ${this.totalStats.uploaded}`);
           }
         }
 
@@ -136,7 +155,6 @@ export default struct MainTab {
           const notUploadedRecords = task.local_records.filter(r => !r.is_uploaded);
           if (notUploadedRecords.length > 0) {
             this.totalStats.notUploaded += notUploadedRecords.length;
-            console.log(`  ✅ 未上传记录 +${notUploadedRecords.length}，当前总数: ${this.totalStats.notUploaded}`);
           }
         }
 
@@ -197,6 +215,7 @@ export default struct MainTab {
       console.log('================================');
 
       this.loading = false;
+      console.log('✅ MainTab 数据刷新完成');
 
     } catch (e) {
       console.error('❌ 加载统计数据失败:', e);
@@ -271,6 +290,20 @@ export default struct MainTab {
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
+
+        // ✅ 添加刷新按钮
+        Button() {
+          Text('🔄')
+            .fontSize(20)
+        }
+        .width(40)
+        .height(40)
+        .backgroundColor(this.loading ? '#CCCCCC' : '#F7F8FA')
+        .enabled(!this.loading)
+        .onClick(async () => {
+          console.log('手动刷新数据');
+          await this.loadStatistics();
+        })
       }
       .width('100%')
       .padding(16)
@@ -317,7 +350,7 @@ export default struct MainTab {
             }
             .width('100%')
             .height(200)
-            .justifyContent(FlexAlign.Start)
+            .justifyContent(FlexAlign.Center)
 
           } else if (this.projectStats.length === 0) {
             Column() {
@@ -331,7 +364,7 @@ export default struct MainTab {
             }
             .width('100%')
             .height(200)
-            .justifyContent(FlexAlign.Start)
+            .justifyContent(FlexAlign.Center)
 
           } else {
             Column() {
@@ -354,7 +387,6 @@ export default struct MainTab {
           Column()
             .height(20)
         }
-
       }
       .layoutWeight(1)
       .scrollBar(BarState.Off)

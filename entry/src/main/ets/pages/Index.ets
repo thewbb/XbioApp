@@ -21,11 +21,13 @@ struct Index {
   @State userInfo: UserInfo | null = null;
 
   // ✅ 用于子组件控制筛选
-  @State missionFilterType: number = 0; // 0=全部, 1=待执行, 2=进行中
-  @State logFilterType: number = 0; // 0=全部, 1=未上传, 2=已上传
+  @State missionFilterType: number = 0;
+  @State logFilterType: number = 0;
 
-  // ✅ 新增：刷新标志（用于触发子组件刷新）
-  @State refreshFlag: number = 0;
+  // ✅ 刷新标志（切换 Tab 时递增）
+  @State mainTabRefreshFlag: number = 0;
+  @State missionTabRefreshFlag: number = 0;
+  @State logTabRefreshFlag: number = 0;
 
   private tabController: TabsController = new TabsController();
 
@@ -41,9 +43,29 @@ struct Index {
   onPageShow() {
     console.log('========== Index 页面显示 ==========');
     if (this.isLoggedIn) {
-      // 递增刷新标志，触发子组件刷新
-      this.refreshFlag++;
-      console.log('✅ 触发刷新，refreshFlag:', this.refreshFlag);
+      this.refreshCurrentTab();
+    }
+  }
+
+  /**
+   * ✅ 刷新当前 Tab
+   */
+  refreshCurrentTab() {
+    console.log('🔄 刷新 Tab:', this.currentTabIndex);
+
+    switch (this.currentTabIndex) {
+      case 0:
+        this.mainTabRefreshFlag++;
+        console.log('  - MainTab refreshFlag:', this.mainTabRefreshFlag);
+        break;
+      case 1:
+        this.missionTabRefreshFlag++;
+        console.log('  - MissionTab refreshFlag:', this.missionTabRefreshFlag);
+        break;
+      case 2:
+        this.logTabRefreshFlag++;
+        console.log('  - LogTab refreshFlag:', this.logTabRefreshFlag);
+        break;
     }
   }
 
@@ -111,7 +133,6 @@ struct Index {
 
         if (!tokenValid) {
           console.log('❌ Token 验证失败，跳转到登录页');
-          // 清除登录状态
           await storage.remove(StorageKeys.CURRENT_USER);
           this.checkingLogin = false;
           setTimeout(() => {
@@ -170,7 +191,6 @@ struct Index {
         let verifyData = response.dataMap as TokenVerifyResponse;
         console.log('✅ Token 有效，用户:', verifyData.username, verifyData.real_name);
 
-        // ✅ 更新本地用户信息
         await this.updateLocalUserInfo(verifyData);
 
         return true;
@@ -180,7 +200,6 @@ struct Index {
       }
     } catch (e) {
       console.error('❌ Token 验证异常:', e);
-      // 网络异常时，认为 Token 可能有效（离线模式）
       return true;
     }
   }
@@ -199,16 +218,13 @@ struct Index {
       let localUser: LocalUser | undefined = localUsers.get(this.currentUsername);
 
       if (localUser) {
-        // 更新用户信息
         localUser.userInfo.real_name = verifyData.real_name;
         localUser.userInfo.mobile = verifyData.mobile;
         localUser.userInfo.utime = verifyData.utime;
 
-        // 保存回本地
         localUsers.set(this.currentUsername, localUser);
         await storage.set(StorageKeys.LOCAL_USERS, localUsers.toJSON());
 
-        // 更新当前显示的用户信息
         this.userInfo = localUser.userInfo;
 
         console.log('✅ 本地用户信息已更新');
@@ -261,7 +277,6 @@ struct Index {
       } else if (this.isLoggedIn) {
         // 主页内容
         Column() {
-          // Tab 内容
           Tabs({ barPosition: BarPosition.End, controller: this.tabController }) {
             // ✅ Tab 0: 主页
             TabContent() {
@@ -269,30 +284,32 @@ struct Index {
                 currentUsername: this.currentUsername,
                 currentToken: this.currentToken,
                 userInfo: this.userInfo,
-                currentTabIndex: $currentTabIndex,         // ✅ 双向绑定
-                missionFilterType: $missionFilterType,     // ✅ 双向绑定
-                logFilterType: $logFilterType              // ✅ 双向绑定
+                currentTabIndex: $currentTabIndex,
+                missionFilterType: $missionFilterType,
+                logFilterType: $logFilterType,
+                refreshFlag: this.mainTabRefreshFlag  // ✅ 传递刷新标志
               })
             }
             .tabBar(this.tabBuilder(0, '主页', $r('app.media.home'), $r('app.media.home_selected')))
 
-            // ✅ Tab 1: 任务（添加 refreshFlag）
+            // ✅ Tab 1: 任务
             TabContent() {
               MissionTab({
                 currentUsername: this.currentUsername,
                 currentToken: this.currentToken,
-                filterType: $missionFilterType,           // ✅ 改为双向绑定
-                refreshFlag: $refreshFlag                 // ✅ 新增：传递刷新标志
+                filterType: $missionFilterType,
+                refreshFlag: this.missionTabRefreshFlag  // ✅ 传递刷新标志
               })
             }
             .tabBar(this.tabBuilder(1, '任务', $r('app.media.file'), $r('app.media.file_selected')))
 
-            // Tab 2: 记录
+            // ✅ Tab 2: 记录
             TabContent() {
               MissionLogTab({
                 currentUsername: this.currentUsername,
                 currentToken: this.currentToken,
-                filterType: this.logFilterType               // ✅ 改为双向绑定
+                filterType: $logFilterType,
+                refreshFlag: this.logTabRefreshFlag  // ✅ 传递刷新标志
               })
             }
             .tabBar(this.tabBuilder(2, '记录', $r('app.media.log'), $r('app.media.log_selected')))
@@ -316,6 +333,9 @@ struct Index {
           .onChange((index: number) => {
             this.currentTabIndex = index;
             console.log('切换到 Tab:', index);
+
+            // ✅ 切换 Tab 时触发刷新
+            this.refreshCurrentTab();
           })
         }
         .width('100%')

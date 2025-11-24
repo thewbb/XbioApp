@@ -1,5 +1,5 @@
 /**
- * 记录列表 Tab - 按任务批量上传
+ * 记录列表 Tab - 按任务批量上传（带刷新支持）
  *
  * 功能：
  * - 显示所有本地保存的表单记录
@@ -7,6 +7,7 @@
  * - 按任务批量上传数据（包含签名）
  * - 查看记录详情
  * - 删除记录
+ * - ✅ 支持切换 Tab 自动刷新
  */
 import router from '@ohos.router';
 import storage, { StorageKeys } from '../utils/storage';
@@ -41,13 +42,13 @@ async function batchUploadMission(request: BatchUploadMissionRequest): Promise<B
       return {
         success: true,
         message: response.message || '上传成功',
-        result: response.dataMap  // ✅ 明确处理 undefined
+        result: response.dataMap
       };
     } else {
       return {
         success: false,
         message: response.message || '上传失败',
-        result: response.dataMap  // ✅ 明确处理 undefined
+        result: response.dataMap
       };
     }
   } catch (err) {
@@ -56,10 +57,11 @@ async function batchUploadMission(request: BatchUploadMissionRequest): Promise<B
     return {
       success: false,
       message: '上传异常: ' + e.message,
-      result: undefined  // ✅ 明确返回 undefined
+      result: undefined
     };
   }
 }
+
 /**
  * ✅ 记录项（包含任务信息）
  */
@@ -74,6 +76,12 @@ export default struct MissionLogTab {
   @Prop currentUsername: string = '';
   @Prop currentToken: string = '';
   @Link filterType: number;
+
+  // ✅ 新增：监听刷新标志
+  @Prop refreshFlag: number = 0;
+
+  // ✅ 用于检测 refreshFlag 变化
+  private lastRefreshFlag: number = 0;
 
   @State records: RecordItem[] = [];
   @State currentFilterIndex: number = 0;
@@ -91,7 +99,19 @@ export default struct MissionLogTab {
 
   async aboutToAppear() {
     console.log('========== MissionLogTab 加载 ==========');
+    this.lastRefreshFlag = this.refreshFlag;
     await this.loadRecords();
+  }
+
+  /**
+   * ✅ 监听 refreshFlag 变化
+   */
+  async aboutToUpdate() {
+    if (this.refreshFlag !== this.lastRefreshFlag && this.refreshFlag > 0) {
+      console.log('🔄 MissionLogTab 检测到刷新标志变化:', this.lastRefreshFlag, '→', this.refreshFlag);
+      this.lastRefreshFlag = this.refreshFlag;
+      await this.loadRecords();
+    }
   }
 
   /**
@@ -99,8 +119,8 @@ export default struct MissionLogTab {
    */
   async loadRecords() {
     try {
+      console.log('🔄 MissionLogTab 开始刷新数据...');
       this.loading = true;
-      console.log('加载本地记录...');
 
       let tasksStr: string = await storage.getUserData(
         this.currentUsername,
@@ -108,14 +128,16 @@ export default struct MissionLogTab {
       );
 
       if (!tasksStr) {
-        console.log('本地暂无任务数据');
+        console.log('⚠️ 本地暂无任务数据');
         this.records = [];
         this.loading = false;
         return;
       }
 
+      // ✅ 同步 filterType 到 currentFilterIndex
       if (this.filterType > 0) {
         this.currentFilterIndex = this.filterType;
+        console.log('✅ 同步筛选类型:', this.filterType);
       }
 
       const tasks: FollowUpTask[] = JSON.parse(tasksStr);
@@ -135,6 +157,7 @@ export default struct MissionLogTab {
         }
       }
 
+      // 按时间倒序排序
       allRecords.sort((a, b) => {
         const timeA = new Date(a.record.filled_time).getTime();
         const timeB = new Date(b.record.filled_time).getTime();
@@ -200,10 +223,8 @@ export default struct MissionLogTab {
       return false;
     }
 
-    // 检查签名对象是否有效
     const signature = task.consent_signature;
 
-    // 检查是否有签名图片
     if (!signature.signature_image || signature.signature_image.trim().length === 0) {
       return false;
     }
@@ -274,7 +295,6 @@ export default struct MissionLogTab {
       const percent = task.percent || '0%';
 
       // ✅ 确定任务状态
-      // 如果有上传记录，状态至少应该是"进行中"
       let state = task.state;
       if (state === 0 && uploadRecords.length > 0) {
         state = 1;  // 设置为进行中
@@ -285,10 +305,10 @@ export default struct MissionLogTab {
         token: this.currentToken,
         mission_id: taskId,
         patient_no: task.patient_no,
-        sign: signatureImage,      // ✅ 签名图片
-        sign_at: signatureTime,    // ✅ 签名时间
-        percent: percent,          // ✅ 完成度
-        state: state,              // ✅ 任务状态
+        sign: signatureImage,
+        sign_at: signatureTime,
+        percent: percent,
+        state: state,
         records: uploadRecords
       };
 
@@ -340,13 +360,9 @@ export default struct MissionLogTab {
       };
     }
   }
+
   /**
    * ✅ 上传所有未同步的记录（按任务批量上传）
-   */
-  /**
-   * ✅ 上传所有未同步的记录（按任务批量上传）
-   * - 自动跳过未签名的任务
-   * - 上传完成后提示被跳过的任务
    */
   async uploadRecords() {
     const groupedRecords = this.groupRecordsByTask();
@@ -455,7 +471,7 @@ export default struct MissionLogTab {
         setTimeout(() => {
           this.missingSignatureTasks = unsignedTasks;
           this.showSignatureMissingDialog = true;
-        }, 2000);  // 2秒后显示
+        }, 2000);
       }
 
     } catch (e) {
@@ -475,7 +491,6 @@ export default struct MissionLogTab {
 
     this.showSignatureMissingDialog = false;
 
-    // 跳转到第一个未签名的任务
     const task = this.missingSignatureTasks[0];
 
     router.pushUrl({
@@ -599,6 +614,22 @@ export default struct MissionLogTab {
             })
 
           Blank()
+
+          // ✅ 添加手动刷新按钮
+          Button() {
+            Text('🔄')
+              .fontSize(16)
+          }
+          .width(36)
+          .height(36)
+          .backgroundColor(this.loading ? '#CCCCCC' : '#F7F8FA')
+          .borderRadius(8)
+          .margin({ right: 8 })
+          .enabled(!this.loading)
+          .onClick(async () => {
+            console.log('手动刷新记录');
+            await this.loadRecords();
+          })
 
           Button(this.uploading ? '上传中...' : '上传')
             .fontSize(14)
