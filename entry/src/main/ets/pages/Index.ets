@@ -21,8 +21,11 @@ struct Index {
   @State userInfo: UserInfo | null = null;
 
   // ✅ 用于子组件控制筛选
-  @State missionFilterType: number = 0;
-  @State logFilterType: number = 0;
+  @State missionFilterType: number = 0; // 0=全部, 1=待执行, 2=进行中
+  @State logFilterType: number = 0; // 0=全部, 1=未上传, 2=已上传
+
+  // ✅ 新增：项目筛选
+  @State selectedProjectId: number = 0; // 0=全部项目，其他=指定项目ID
 
   // ✅ 刷新标志（切换 Tab 时递增）
   @State mainTabRefreshFlag: number = 0;
@@ -277,7 +280,11 @@ struct Index {
       } else if (this.isLoggedIn) {
         // 主页内容
         Column() {
-          Tabs({ barPosition: BarPosition.End, controller: this.tabController }) {
+          Tabs({
+            barPosition: BarPosition.End,
+            controller: this.tabController,
+            index: this.currentTabIndex  // ✅ 添加这一行
+          }) {
             // ✅ Tab 0: 主页
             TabContent() {
               MainTab({
@@ -287,7 +294,8 @@ struct Index {
                 currentTabIndex: $currentTabIndex,
                 missionFilterType: $missionFilterType,
                 logFilterType: $logFilterType,
-                refreshFlag: this.mainTabRefreshFlag  // ✅ 传递刷新标志
+                selectedProjectId: $selectedProjectId,  // ✅ 新增
+                refreshFlag: this.mainTabRefreshFlag
               })
             }
             .tabBar(this.tabBuilder(0, '主页', $r('app.media.home'), $r('app.media.home_selected')))
@@ -298,7 +306,8 @@ struct Index {
                 currentUsername: this.currentUsername,
                 currentToken: this.currentToken,
                 filterType: $missionFilterType,
-                refreshFlag: this.missionTabRefreshFlag  // ✅ 传递刷新标志
+                selectedProjectId: $selectedProjectId,  // ✅ 新增
+                refreshFlag: this.missionTabRefreshFlag
               })
             }
             .tabBar(this.tabBuilder(1, '任务', $r('app.media.file'), $r('app.media.file_selected')))
@@ -309,7 +318,7 @@ struct Index {
                 currentUsername: this.currentUsername,
                 currentToken: this.currentToken,
                 filterType: $logFilterType,
-                refreshFlag: this.logTabRefreshFlag  // ✅ 传递刷新标志
+                refreshFlag: this.logTabRefreshFlag
               })
             }
             .tabBar(this.tabBuilder(2, '记录', $r('app.media.log'), $r('app.media.log_selected')))

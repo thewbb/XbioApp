@@ -18,7 +18,8 @@ export default struct MissionTab {
   @Prop currentUsername: string = '';
   @Prop currentToken: string = '';
   @Link filterType: number;
-  @Link refreshFlag: number;
+  @Link selectedProjectId: number;  // ✅ 改为 @Link，接收父组件传递
+  @Prop refreshFlag: number = 0;
 
   @State tasks: FollowUpTask[] = [];
   @State loading: boolean = false;
@@ -31,7 +32,6 @@ export default struct MissionTab {
 
   // ✅ 项目筛选相关
   @State projectList: ProjectOption[] = [];
-  @State selectedProjectId: number = 0;  // 0 = 全部项目
 
   // 对话框控制
   @State showSyncConfirmDialog: boolean = false;
@@ -47,6 +47,7 @@ export default struct MissionTab {
     console.log('========== MissionTab 加载 ==========');
     console.log('用户名:', this.currentUsername);
     console.log('Token:', this.currentToken ? '已获取' : '未获取');
+    console.log('初始 selectedProjectId:', this.selectedProjectId);  // ✅ 日志
 
     await this.loadTasks();
     await this.loadLastSyncTime();
@@ -54,6 +55,7 @@ export default struct MissionTab {
     // ✅ 根据传入的 filterType 设置初始筛选
     if (this.filterType > 0) {
       this.currentFilterIndex = this.filterType;
+      console.log('✅ 同步 filterType:', this.filterType);
     }
 
     // ✅ 记录初始刷新标志
@@ -143,6 +145,8 @@ export default struct MissionTab {
     projectMap.forEach((name, id) => {
       this.projectList.push({ id, name });
     });
+
+    console.log('✅ 提取到项目列表:', this.projectList.length, '个项目');
   }
 
   /**
@@ -345,6 +349,7 @@ export default struct MissionTab {
     // 1. 按项目筛选
     if (this.selectedProjectId !== 0) {
       filteredTasks = filteredTasks.filter(task => task.project_id === this.selectedProjectId);
+      console.log(`✅ 项目筛选 [ID=${this.selectedProjectId}]:`, filteredTasks.length, '条');
     }
 
     // 2. 按状态筛选
@@ -455,13 +460,57 @@ export default struct MissionTab {
     });
   }
 
+  /**
+   * ✅ 获取当前选中项目的名称
+   */
+  getSelectedProjectName(): string {
+    if (this.selectedProjectId === 0) {
+      return '全部项目';
+    }
+
+    const project = this.projectList.find(p => p.id === this.selectedProjectId);
+    return project ? project.name : `项目 ${this.selectedProjectId}`;
+  }
+
   @Builder
   ProjectSelector() {
     Column() {
+      // ✅ 如果选中了特定项目，显示当前项目和清除按钮
+      if (this.selectedProjectId !== 0) {
+        Row() {
+          Text('🏥 ')
+            .fontSize(14)
+
+          Text(`当前项目：${this.getSelectedProjectName()}`)
+            .fontSize(13)
+            .fontColor('#FF6B00')
+            .fontWeight(FontWeight.Medium)
+            .layoutWeight(1)
+
+          Button('清除筛选')
+            .fontSize(12)
+            .height(28)
+            .padding({ left: 12, right: 12 })
+            .backgroundColor('#F5F5F5')
+            .fontColor('#666666')
+            .borderRadius(4)
+            .onClick(() => {
+              console.log('✅ 清除项目筛选');
+              this.selectedProjectId = 0;
+            })
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+        .backgroundColor('#FFF7E6')
+        .borderRadius(8)
+        .margin({ left: 12, right: 12, bottom: 8 })
+      }
+
+      // ✅ 项目筛选标签（始终显示）
       Text('项目筛选')
         .fontSize(13)
         .fontColor('#999999')
-        .margin({ bottom: 8 })
+        .margin({ bottom: 8, left: 12 })
         .alignSelf(ItemAlign.Start)
 
       // ✅ 使用横向滚动的标签
@@ -481,18 +530,19 @@ export default struct MissionTab {
               })
               .margin({ right: 8 })
               .onClick(() => {
+                console.log('✅ 选择项目:', project.name, 'ID:', project.id);
                 this.selectedProjectId = project.id;
-                console.log('选择项目:', project.name);
               })
           })
         }
+        .padding({ left: 12 })
       }
       .scrollable(ScrollDirection.Horizontal)
       .scrollBar(BarState.Off)
       .width('100%')
     }
     .width('100%')
-    .padding({ left: 12, right: 12, bottom: 8 })
+    .padding({ bottom: 8 })
     .alignItems(HorizontalAlign.Start)
   }
 
@@ -627,6 +677,16 @@ export default struct MissionTab {
                 .borderRadius(8)
                 .onClick(() => {
                   this.handleSync();
+                })
+            } else if (this.selectedProjectId !== 0) {
+              Button('清除项目筛选')
+                .fontSize(14)
+                .margin({ top: 20 })
+                .backgroundColor('#F5F5F5')
+                .fontColor('#666666')
+                .borderRadius(8)
+                .onClick(() => {
+                  this.selectedProjectId = 0;
                 })
             }
           }
@@ -851,5 +911,6 @@ export default struct MissionTab {
     }
     .width('100%')
     .height('100%')
+
   }
 }

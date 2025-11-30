@@ -5,6 +5,7 @@
  * 1. 提交后无法返回上一页的问题
  * 2. 公式计算逻辑（支持选项分值计算 A=3）
  * 3. 使用安全的表达式计算器（不使用 eval/new Function）
+ * 4. ✅ 新增：支持 client_visible 字段控制（0=不显示但参与计算和保存）
  */
 import router from '@ohos.router';
 import { FollowUpTask, FormTable, FormField, FormRecord } from '../types';
@@ -29,7 +30,6 @@ struct FormPage {
   @State toastController: ToastController = new ToastController();
 
   private backTimer: number = -1;
-
   private uiContext: UIContext | null = null;
 
   async aboutToAppear() {
@@ -91,6 +91,9 @@ struct FormPage {
     }, delay);
   }
 
+  /**
+   * ✅ 初始化表单数据（包括隐藏字段）
+   */
   async initFormData() {
     if (!this.currentTable || !this.currentTable.fields) {
       return;
@@ -105,6 +108,7 @@ struct FormPage {
     );
 
     this.currentTable.fields.forEach((field: FormField) => {
+      // ✅ 所有可编辑的字段都初始化（包括 client_visible=0 的隐藏字段）
       if (field.is_editable === '1') {
         if (savedRecord && savedRecord.data[field.field_name]) {
           data.set(field.field_name, savedRecord.data[field.field_name]);
@@ -123,7 +127,7 @@ struct FormPage {
     });
 
     this.formData = data;
-    this.calculateAllFormulas();
+    this.calculateAllFormulas(); // ✅ 这里会计算所有字段（包括隐藏字段）
 
     if (savedRecord) {
       console.log('✅ 已加载本地保存的数据');
@@ -565,14 +569,23 @@ struct FormPage {
     });
   }
 
+  /**
+   * ✅ 验证表单（隐藏字段不参与必填验证）
+   */
   validateForm(): boolean {
     if (!this.currentTable || !this.currentTable.fields) {
       return false;
     }
 
     for (let field of this.currentTable.fields) {
-      // ✅ 只验证可见且可编辑的必填字段
-      if (this.isFieldVisible(field) && field.is_editable === '1' && field.required === 1) {
+      // ✅ 只验证可见、可编辑的必填字段
+      // client_visible=0 的字段不参与验证
+      if (
+        field.client_visible !== 0 &&  // ✅ 隐藏字段不验证
+        this.isFieldVisible(field) &&
+          field.is_editable === '1' &&
+          field.required === 1
+      ) {
         const value = this.getFieldValue(field.field_name);
         if (!value || value.trim() === '') {
           this.toastController.show(`请填写 ${field.annotation}`);
@@ -585,9 +598,18 @@ struct FormPage {
   }
 
   /**
-   * ✅ 判断字段是否应该显示（根据 control_by 控制）
+   * ✅ 判断字段是否应该显示
+   * 规则：
+   * 1. 如果 client_visible === 0，不显示（但依然参与计算和保存）
+   * 2. 如果有 control_by 控制，检查控制条件
    */
   isFieldVisible(field: FormField): boolean {
+    // ✅ 优先检查 client_visible（0=不显示，1=显示）
+    if (field.client_visible === 0) {
+      console.log(`字段 ${field.field_name} 被隐藏 (client_visible=0)`);
+      return false;
+    }
+
     // 如果没有 control_by，直接显示
     if (!field.control_by || field.control_by.trim() === '') {
       return true;
@@ -648,6 +670,7 @@ struct FormPage {
     try {
       this.saving = true;
 
+      // ✅ 保存所有字段（包括 client_visible=0 的隐藏字段）
       const dataObj: Record<string, string> = {};
       this.formData.forEach((value: string, key: string) => {
         dataObj[key] = value;
@@ -693,10 +716,13 @@ struct FormPage {
     try {
       this.submitting = true;
 
+      // ✅ 保存所有字段（包括 client_visible=0 的隐藏字段）
       const dataObj: Record<string, string> = {};
       this.formData.forEach((value: string, key: string) => {
         dataObj[key] = value;
       });
+
+      console.log('📦 提交的表单数据（包括隐藏字段）:', JSON.stringify(dataObj));
 
       const record: FormRecord = {
         table_id: this.currentTable!.id,
@@ -716,7 +742,7 @@ struct FormPage {
       this.submitting = false;
 
       if (saveSuccess) {
-        console.log('✅ 本地保存成功');
+        console.log('✅ 本地保存成功（包括隐藏字段）');
         this.toastController.show('✅ 保存成功，可在记录页面上传');
 
         // ✅ 修复：确保返回上一页
@@ -930,8 +956,12 @@ struct FormPage {
 
   @Builder
   FormFieldItem(field: FormField) {
-    if (!this.isFieldVisible(field)) {
-      // 不显示该字段
+    // ✅ 优先检查 client_visible (0=不显示, 1=显示)
+    if (field.client_visible === 0) {
+      // 完全不渲染（包括占位空间都不要）
+      Column().width(0).height(0)
+    } else if (!this.isFieldVisible(field)) {
+      // 不显示该字段（受 control_by 控制）
       Column().width(0).height(0)
     } else if (field.show_type === 'description') {
       Text(field.annotation)

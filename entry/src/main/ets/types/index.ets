@@ -160,6 +160,7 @@ export interface FormField {
   formula?: string;  // 计算公式
   is_editable: string;  // "0"=不可编辑，"1"=可编辑
   is_list: string;  // "0"=不在列表显示，"1"=在列表显示
+  client_visible:number;
 }
 
 // 表单信息（包含字段）
