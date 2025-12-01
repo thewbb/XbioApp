@@ -57,24 +57,55 @@ export default struct MissionLogTab {
     }, 500);
   }
 
+  /**
+   * 核心筛选与排序逻辑
+   * 规则：
+   * 1. 只有"本地有记录"的任务才会显示
+   * 2. 排序：未上传的排在最前面，已上传的排在后面
+   */
   getFilteredTasks(): FollowUpTask[] {
     if (!this.tasks || this.tasks.length === 0) return [];
 
-    return this.tasks.filter(task => {
-      // 1. 基础条件：必须有本地表单记录才显示在日志页
+    // 1. 先筛选
+    let filtered = this.tasks.filter(task => {
+      // 必须有本地表单记录
       if (!task.local_records || task.local_records.length === 0) {
         return false;
       }
 
       const hasUnuploaded = task.local_records.some(r => !r.is_uploaded);
 
-      if (this.filterType === 1) {
+      if (this.filterType === 1) { // 仅显示待上传
         return hasUnuploaded;
-      } else if (this.filterType === 2) {
+      } else if (this.filterType === 2) { // 仅显示已上传
         return !hasUnuploaded;
       }
-      return true;
+      return true; // 全部显示
     });
+
+    // 2. 后排序
+    // sort 返回负数表示 a 排在 b 前面
+    filtered.sort((a, b) => {
+      const aPending = this.getPendingCount(a) > 0; // a 是否待上传
+      const bPending = this.getPendingCount(b) > 0; // b 是否待上传
+
+      if (aPending && !bPending) {
+        return -1; // a 待上传，b 已上传 -> a 排前
+      }
+      if (!aPending && bPending) {
+        return 1; // a 已上传，b 待上传 -> b 排前
+      }
+
+      // 如果状态相同（都是待上传，或都是已上传），则按任务创建时间倒序排列（最新的在上面）
+      // 假设有 create_time 字段，是字符串比较
+      if (a.create_time && b.create_time) {
+        return b.create_time.localeCompare(a.create_time);
+      }
+
+      return 0;
+    });
+
+    return filtered;
   }
 
   hasConsent(task: FollowUpTask): boolean {
