@@ -159,13 +159,13 @@ class Storage {
       const url = await this.get(StorageKeys.SERVER_URL);
       // 如果没有配置，返回默认值
       if (!url || url === '') {
-        return 'http://192.168.48.87:8080/Xbiosms_war_exploded';
+        return '192.168.48.87:8080';
       }
       console.log('✅ 读取服务器地址（全局）:', url);
       return url;
     } catch (e) {
       console.error('❌ 获取服务器地址失败:', e);
-      return 'http://192.168.48.87:8080/Xbiosms_war_exploded';
+      return '192.168.48.87:8080';
     }
   }
 
@@ -174,7 +174,7 @@ class Storage {
    */
   async setServerUrl(url: string): Promise<void> {
     try {
-      await this.set(StorageKeys.SERVER_URL, url);
+      await this.set(StorageKeys.SERVER_URL, "http://" + url);
       console.log('✅ 服务器地址已保存（全局）:', url);
     } catch (e) {
       console.error('❌ 保存服务器地址失败:', e);

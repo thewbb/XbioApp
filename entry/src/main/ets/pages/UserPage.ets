@@ -1,5 +1,6 @@
 /**
- * 用户登录页面 - 支持离线登录 + 服务器配置
+ * 用户登录页面 - 支持离线登录 + 服务器配置 + 网络验证
+ * 修改点：自动过滤输入的 http:// 或 https:// 前缀
  */
 import promptAction from '@ohos.promptAction';
 import router from '@ohos.router';
@@ -7,6 +8,7 @@ import http from '../utils/http';
 import storage, { StorageKeys } from '../utils/storage';
 import { MD5 } from '../utils/md5';
 import { ApiResponse, LoginRequest, LoginResponse, LocalUser, LocalUsers, CurrentUser, UserInfo } from '../types';
+import { CustomToast, ToastController } from '../components/CustomToast';
 
 // 登录结果类型
 class LoginResult {
@@ -21,11 +23,13 @@ struct UserPage {
   @State password: string = '';
   @State keepLogin: boolean = false;
   @State loading: boolean = false;
+  @State toastController: ToastController = new ToastController();
 
   // ✅ 服务器配置相关状态
   @State showServerDialog: boolean = false;
   @State serverUrl: string = '';
   @State tempServerUrl: string = '';
+  @State isCheckingServer: boolean = false; // 新增：检查服务器中
 
   async aboutToAppear() {
     console.log('UserPage 页面加载...');
@@ -74,20 +78,6 @@ struct UserPage {
   }
 
   /**
-   * 显示提示消息
-   */
-  showMessage(message: string) {
-    try {
-      promptAction.showToast({
-        message: message,
-        duration: 2000
-      });
-    } catch (e) {
-      console.error('显示 Toast 失败:', e);
-    }
-  }
-
-  /**
    * ✅ 打开服务器配置对话框
    */
   openServerConfig() {
@@ -96,29 +86,76 @@ struct UserPage {
   }
 
   /**
-   * ✅ 保存服务器配置
+   * ✅ 保存服务器配置（带验证 + 自动过滤前缀）
    */
   async saveServerConfig() {
+    // 1. ✅ 自动过滤处理：去除首尾空格，去除 http:// 或 https:// 前缀
+    let cleanUrl = this.tempServerUrl.trim();
+    // 正则表达式替换：^表示开头，https?表示http或https，i表示忽略大小写
+    cleanUrl = cleanUrl.replace(/^https?:\/\//i, '');
+
+    // 更新状态变量，这样输入框里的内容也会自动变干净，给用户直观反馈
+    this.tempServerUrl = cleanUrl;
+
     if (!this.tempServerUrl) {
-      this.showMessage('请输入服务器地址');
+      this.toastController.show('请输入服务器地址');
       return;
     }
 
-    // 验证 URL 格式（简单验证）
-    if (!this.tempServerUrl.startsWith('http://') && !this.tempServerUrl.startsWith('https://')) {
-      this.showMessage('请输入完整的服务器地址（以 http:// 或 https:// 开头）');
-      return;
-    }
+    // 简单格式校验 (可选，简单判断是否包含冒号)
+    // if (this.tempServerUrl.indexOf(':') === -1) {
+    //   this.toastController.show('请输入正确的 IP:端口 格式');
+    //   return;
+    // }
+
+    this.isCheckingServer = true; // 显示加载状态
 
     try {
+      // 2. 验证服务器是否可达
+      console.log('正在验证服务器:', this.tempServerUrl);
+
+      // 临时保存旧地址以便回滚
+      // 注意：这里假设 http 工具类有 getBaseUrl 方法，如果没有，请自行调整
+      // 如果 http.baseUrl 是公开属性直接读取即可，或者直接 try-catch 覆盖
+      let oldUrl = '';
+      try {
+        // 尝试获取旧地址，如果工具类不支持获取，可以省略这一步，验证失败不回滚也行，或者依靠 loadServerUrl 恢复
+        // 这里为了稳健，假设我们能获取或通过 storage 恢复
+        oldUrl = this.serverUrl;
+      } catch(e) {}
+
+      // 设置新地址
       await http.setBaseUrl(this.tempServerUrl);
-      this.serverUrl = this.tempServerUrl;
-      this.showServerDialog = false;
-      this.showMessage('服务器地址已保存');
-      console.log('✅ 服务器地址已更新:', this.serverUrl);
+
+      // 发起测试请求
+      try {
+        // 使用 http.isOnline() 检测新地址连通性
+        let isServerAvailable = await http.isOnline();
+
+        if (!isServerAvailable) {
+          throw new Error('服务器无法连接');
+        }
+
+        // 验证通过，确认保存
+        this.serverUrl = this.tempServerUrl;
+        this.showServerDialog = false;
+        this.toastController.show('✅ 服务器连接成功并已保存');
+        console.log('✅ 服务器地址已更新:', this.serverUrl);
+
+      } catch (err) {
+        // 验证失败，回滚地址
+        console.error('验证失败:', err);
+        if (oldUrl) {
+          await http.setBaseUrl(oldUrl); // 恢复旧地址
+        }
+        this.toastController.show('❌ 无法连接到该服务器，请检查地址');
+      }
+
     } catch (e) {
-      console.error('❌ 保存服务器地址失败:', e);
-      this.showMessage('保存失败');
+      console.error('❌ 保存服务器地址过程异常:', e);
+      this.toastController.show('验证过程出错');
+    } finally {
+      this.isCheckingServer = false;
     }
   }
 
@@ -281,7 +318,6 @@ struct UserPage {
     try {
       console.log('步骤1: 加密密码...');
       const passwordMd5: string = this.md5(this.password);
-      console.log('密码加密完成:', passwordMd5);
 
       if (!passwordMd5) {
         result.success = false;
@@ -293,8 +329,9 @@ struct UserPage {
       let isOnline: boolean = false;
 
       try {
+        // ✅ 修改：使用 http.isOnline() 并且确保它基于当前配置的服务器地址
         isOnline = await http.isOnline();
-        console.log('网络状态:', isOnline ? '在线' : '离线');
+        console.log('网络及服务器状态:', isOnline ? '在线' : '离线');
       } catch (e) {
         console.error('网络检查失败，假定离线:', e);
         isOnline = false;
@@ -322,7 +359,7 @@ struct UserPage {
           result.message = '登录成功（离线）';
         } else {
           result.success = false;
-          result.message = '离线登录失败，请先联网登录一次';
+          result.message = '无法连接服务器，且无离线记录';
         }
       }
 
@@ -340,34 +377,15 @@ struct UserPage {
    * 页面跳转
    */
   navigateToIndex() {
-    try {
-      console.log('准备跳转到 Index 页面...');
-      router.replaceUrl({
-        url: 'pages/Index'
-      })
-        .then(() => {
-          console.log('✅ 跳转成功');
-        })
-        .catch((err: Error) => {
-          console.error('❌ 跳转失败:', err);
-        });
-    } catch (e) {
-      console.error('❌ 页面跳转异常:', e);
-    }
+    router.replaceUrl({ url: 'pages/Index' });
   }
 
   /**
    * 登录按钮处理
    */
   handleLogin() {
-    console.log('======== 开始登录 ========');
-    console.log('用户名:', this.username);
-    console.log('密码长度:', this.password.length);
-    console.log('保持登录:', this.keepLogin);
-
     if (!this.username || !this.password) {
-      this.showMessage('请输入用户名和密码');
-      console.log('登录失败：输入为空');
+      this.toastController.show('请输入用户名和密码');
       return;
     }
 
@@ -376,27 +394,21 @@ struct UserPage {
 
     setTimeout(() => {
       that.doLogin().then((result: LoginResult) => {
-        console.log('登录结果:', JSON.stringify(result));
         that.loading = false;
 
         if (result.success) {
-          console.log('✅ 登录成功，准备跳转...');
-
+          this.toastController.show(result.message);
           setTimeout(() => {
             that.navigateToIndex();
           }, 200);
         } else {
-          console.log('❌ 登录失败:', result.message);
-          that.showMessage(result.message);
+          this.toastController.show(result.message);
         }
       }).catch((err: Error) => {
-        console.error('❌ 登录异常:', err);
         that.loading = false;
-        that.showMessage('登录失败');
+        this.toastController.show('登录失败');
       });
     }, 100);
-
-    console.log('======== 登录流程启动 ========');
   }
 
   build() {
@@ -463,7 +475,6 @@ struct UserPage {
               .select(this.keepLogin)
               .onChange((value: boolean) => {
                 this.keepLogin = value;
-                console.log('保持登录状态改变:', value);
               })
 
             Text('保持登录（离线可用）')
@@ -543,7 +554,9 @@ struct UserPage {
                 .fontSize(24)
                 .fontColor('#999999')
                 .onClick(() => {
-                  this.showServerDialog = false;
+                  if (!this.isCheckingServer) {
+                    this.showServerDialog = false;
+                  }
                 })
             }
             .width('100%')
@@ -557,7 +570,7 @@ struct UserPage {
                 .width('100%')
 
               TextInput({
-                placeholder: 'http://192.168.1.100:8080/xxx',
+                placeholder: '192.168.1.100:8080',
                 text: this.tempServerUrl
               })
                 .width('100%')
@@ -569,7 +582,7 @@ struct UserPage {
                   this.tempServerUrl = value;
                 })
 
-              Text('示例：http://192.168.48.87:8080/Xbiosms_war_exploded')
+              Text('示例：192.168.48.87:8080')
                 .fontSize(12)
                 .fontColor('#999999')
                 .width('100%')
@@ -586,17 +599,19 @@ struct UserPage {
                 .fontColor('#666666')
                 .backgroundColor('#F5F5F5')
                 .borderRadius(8)
+                .enabled(!this.isCheckingServer) // 检查时禁用
                 .onClick(() => {
                   this.showServerDialog = false;
                 })
 
-              Button('保存')
+              Button(this.isCheckingServer ? '验证中...' : '保存')
                 .layoutWeight(1)
                 .height(44)
                 .fontSize(15)
                 .fontColor('#FFFFFF')
-                .backgroundColor('#FF6B00')
+                .backgroundColor(this.isCheckingServer ? '#CCCCCC' : '#FF6B00')
                 .borderRadius(8)
+                .enabled(!this.isCheckingServer)
                 .onClick(() => {
                   this.saveServerConfig();
                 })
@@ -619,6 +634,7 @@ struct UserPage {
         .justifyContent(FlexAlign.Center)
         .backgroundColor('rgba(0, 0, 0, 0.5)')
       }
+      CustomToast({ controller: this.toastController })
     }
     .width('100%')
     .height('100%')

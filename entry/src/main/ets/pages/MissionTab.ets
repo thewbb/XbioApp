@@ -291,7 +291,7 @@ export default struct MissionTab {
         .width('100%').padding({ left: 12, right: 12, top: 8, bottom: 8 })
         .backgroundColor('#FFF7E6').borderRadius(8).margin({ left: 12, right: 12, bottom: 8 })
       }
-      Text('项目筛选').fontSize(13).fontColor('#999999').margin({ bottom: 8, left: 12 }).alignSelf(ItemAlign.Start)
+
       Scroll() {
         Row() {
           ForEach(this.projectList, (project: ProjectOption) => {
@@ -333,7 +333,7 @@ export default struct MissionTab {
             .onClick(() => { this.handleSync(); })
         }
         .width('100%')
-        .padding({ left: 12, right: 12, bottom: 12, top: 40 })
+        .padding({ left: 12, right: 12, bottom: 12, top: 12 })
         .backgroundColor('#F5F5F5')
 
         this.ProjectSelector()
