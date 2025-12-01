@@ -179,6 +179,8 @@ export default struct MissionLogTab {
         patient_no: task.patient_no,
         // 只有当知情同意书是在本地新签的（有图片数据），才传 sign
         sign: task.consent_signature.signature_image || undefined,
+        sign_at: task.consent_signature ? task.consent_signature.signature_time : '',
+
         records: uploadItems
       };
 
