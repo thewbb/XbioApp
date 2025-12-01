@@ -357,23 +357,37 @@ struct Index {
   }
 
   /**
-   * Tab 标签构建器
+   * Tab 标签构建器 - 优化版
    */
   @Builder
   tabBuilder(index: number, title: string, icon: Resource, iconSelected: Resource) {
     Column() {
-      Image(this.currentTabIndex === index ? iconSelected : icon)
-        .width(24)
-        .height(24)
-        .objectFit(ImageFit.Contain)
+      // 1. 顶部分割线：让导航栏和内容区界限分明
+      Divider()
+        .strokeWidth(0.5)
+        .color('#E5E5E5')
+        .width('100%')
 
-      Text(title)
-        .fontSize(12)
-        .fontColor(this.currentTabIndex === index ? '#FF6B00' : '#999999')
-        .margin({ top: 4 })
+      // 2. 内容区域
+      Column() {
+        Image(this.currentTabIndex === index ? iconSelected : icon)
+          .width(24)
+          .height(24)
+          .objectFit(ImageFit.Contain)
+          .margin({ bottom: 3 }) // 微调图标和文字间距
+
+        Text(title)
+          .fontSize(10) // 稍微调小字号，显得更精致
+          .fontWeight(this.currentTabIndex === index ? FontWeight.Medium : FontWeight.Normal) // 选中时加粗
+          .fontColor(this.currentTabIndex === index ? '#FF6B00' : '#999999') // 选中用品牌色，未选中用浅灰
+          .lineHeight(14)
+      }
+      .width('100%')
+      .layoutWeight(1) // 占据剩余高度
+      .justifyContent(FlexAlign.Center)
     }
     .width('100%')
-    .height(56)
-    .justifyContent(FlexAlign.Center)
+    .height(56) // 标准底部导航高度
+    .backgroundColor('#FFFFFF') // 3. 背景改为纯白
   }
 }
