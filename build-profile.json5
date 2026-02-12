@@ -5,13 +5,13 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "C:\\Users\\thewbb\\.ohos\\config\\default_XbioApp_80nWiLGi_MinWYrl7ZQIe6CmOUEgEHsQOY9W9UH43ck=.cer",
+          "storeFile": "C:/Users/thewbb/.ohos/config/default_XbioApp_80nWiLGi_MinWYrl7ZQIe6CmOUEgEHsQOY9W9UH43ck=.p12",
+          "storePassword": "0000001AE66B4F02C7DFD6578CD3F72CB816139D5A2A2A634BF9841DCB501EBEB795735E6A0C6FF2A682",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001A087801C13A595291FD8D308223A51877A1C0D5A5D8F7D099E42EFE4E5D91D21FEB5B54614ACB",
-          "profile": "C:\\Users\\thewbb\\.ohos\\config\\default_XbioApp_80nWiLGi_MinWYrl7ZQIe6CmOUEgEHsQOY9W9UH43ck=.p7b",
+          "keyPassword": "0000001A0AAAE7BBA014EB96B4048BEB3861FDC2FB478C475546132DCDCFFE98F387F19E9050106490AD",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "C:\\Users\\thewbb\\.ohos\\config\\default_XbioApp_80nWiLGi_MinWYrl7ZQIe6CmOUEgEHsQOY9W9UH43ck=.p12",
-          "storePassword": "0000001A8387EBF5ECB109FD0E89B0B2B9F42454564F9009641B84579FD7336E838D0962A1CF182872B2"
+          "profile": "D:/Downloads/debug.p7b",
+          "certpath": "D:/Downloads/auto_debug_220086000021978470.cer.cer"
         }
       }
     ],
