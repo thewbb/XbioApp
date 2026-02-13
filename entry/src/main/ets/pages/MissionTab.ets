@@ -7,6 +7,7 @@ import storage, { StorageKeys } from '../utils/storage';
 import http from '../utils/http';
 import { FollowUpTask, TaskListRequest, FormRecord } from '../types';
 import { CustomToast, ToastController } from '../components/CustomToast';
+import common from '@ohos.app.ability.common';
 
 // ... (接口定义保持不变)
 interface ProjectOption { id: number; name: string; }
@@ -133,13 +134,152 @@ export default struct MissionTab {
       if (response.code === 0) {
         const serverTasks: FollowUpTask[] = response.dataList ? (response.dataList as FollowUpTask[]) : [];
 
+        // ============================================
+        // ✅ 新增：收集并下载图片
+        // ============================================
+        const imageUrls: string[] = [];
+
+        // 遍历所有任务，收集 imageDesc 类型字段的图片 URL
+        serverTasks.forEach(task => {
+          if (task.project && task.project.tables) {
+            task.project.tables.forEach(table => {
+              if (table.fields) {
+                table.fields.forEach(field => {
+                  // 只处理 imageDesc 类型且有 default_value 的字段
+                  if (field.show_type === 'imageDesc' && field.default_value) {
+                    // 去重
+                    if (!imageUrls.includes(field.default_value)) {
+                      imageUrls.push(field.default_value);
+                    }
+                  }
+                });
+              }
+            });
+          }
+        });
+
+        console.log(`📥 发现 ${imageUrls.length} 张图片需要下载`);
+
+        // 批量下载图片
+        let imageMap: Map<string, string> = new Map();
+        if (imageUrls.length > 0) {
+          this.toastController.show(`正在下载 ${imageUrls.length} 张图片...`);
+
+          // 获取保存目录（用户专属的 images 目录）
+          const context = getContext(this) as common.UIAbilityContext;
+          const filesDir = context.filesDir;
+          const imagesDir = `${filesDir}/images`;
+
+          console.log(`📁 图片保存目录: ${imagesDir}`);
+
+          // 调用下载方法
+          imageMap = await http.downloadImages(imageUrls, imagesDir);
+
+          console.log(`✅ 成功下载 ${imageMap.size}/${imageUrls.length} 张图片`);
+        }
+
+        // 将下载的本地路径映射到字段中
+        serverTasks.forEach(task => {
+          if (task.project && task.project.tables) {
+            task.project.tables.forEach(table => {
+              if (table.fields) {
+                table.fields.forEach(field => {
+                  if (field.show_type === 'imageDesc' && field.default_value) {
+                    const localPath = imageMap.get(field.default_value);
+                    if (localPath) {
+                      // ✅ 保存本地路径到 local_image_path
+                      field.local_image_path = localPath;
+                      console.log(`✅ 图片已映射: ${field.field_name} → ${localPath}`);
+                    }
+                  }
+                });
+              }
+            });
+          }
+        });
+        // ============================================
+        // ✅ 图片下载处理结束
+        // ============================================
+
         let currentLocalTasks = [...this.tasks];
         let addedCount = 0;
+        let updatedCount = 0;
 
         serverTasks.forEach(serverTask => {
-          const exists = currentLocalTasks.some(local => local.id === serverTask.id);
-          if (!exists) {
-            currentLocalTasks.push(serverTask);
+          // 查找本地是否已存在该任务
+          const existingIndex = currentLocalTasks.findIndex(local => local.id === serverTask.id);
+
+          if (existingIndex >= 0) {
+            // ✅ 任务已存在，执行合并更新
+            const localTask = currentLocalTasks[existingIndex];
+
+            // 判断是否有本地填写记录
+            const hasLocalRecords = localTask.local_records && localTask.local_records.length > 0;
+
+            console.log(`🔄 更新任务: ID=${serverTask.id}`);
+            console.log(`  患者姓名: ${localTask.name || '无'} → ${serverTask.name}`);
+            console.log(`  本地记录数: ${localTask.local_records?.length || 0}`);
+            console.log(`  是否有本地填写: ${hasLocalRecords ? '是' : '否'}`);
+
+            // ✅ 合并策略：构建完整的 FollowUpTask 对象
+            const updatedTask: FollowUpTask = {
+              // 基础字段：使用服务器数据
+              id: serverTask.id,
+              project_id: serverTask.project_id,
+              project_name: serverTask.project_name,
+              patient_no: serverTask.patient_no,
+              from_user_id: serverTask.from_user_id,
+              to_user_id: serverTask.to_user_id,
+              name: serverTask.name,
+              creator: serverTask.creator,
+              create_time: serverTask.create_time,
+              state: serverTask.state,
+              percent: serverTask.percent,
+              sf_table_ids: serverTask.sf_table_ids,
+              comment: serverTask.comment,
+
+              // 表单配置：根据是否有本地记录决定
+              project: hasLocalRecords
+                ? localTask.project  // 有本地记录 → 保持原有表单配置
+                : serverTask.project, // 没有本地记录 → 使用服务器表单配置（包含图片路径）
+
+              // 本地数据：始终保留
+              local_records: localTask.local_records || [],
+              consent_signature: localTask.consent_signature
+            };
+
+            currentLocalTasks[existingIndex] = updatedTask;
+
+            console.log(`  ✅ 表单配置: ${hasLocalRecords ? '保持不变' : '已更新'}`);
+            console.log(`  ✅ 合并完成`);
+
+            updatedCount++;
+
+          } else {
+            // ✅ 新任务，直接添加
+            console.log(`➕ 新增任务: ID=${serverTask.id}, 姓名=${serverTask.name}`);
+
+            // 构建完整的 FollowUpTask 对象
+            const newTask: FollowUpTask = {
+              id: serverTask.id,
+              project_id: serverTask.project_id,
+              project_name: serverTask.project_name,
+              patient_no: serverTask.patient_no,
+              from_user_id: serverTask.from_user_id,
+              to_user_id: serverTask.to_user_id,
+              name: serverTask.name,
+              creator: serverTask.creator,
+              create_time: serverTask.create_time,
+              state: serverTask.state,
+              percent: serverTask.percent,
+              sf_table_ids: serverTask.sf_table_ids,
+              comment: serverTask.comment,
+              project: serverTask.project, // 包含图片本地路径
+              local_records: [],
+              consent_signature: undefined
+            };
+
+            currentLocalTasks.push(newTask);
             addedCount++;
           }
         });
@@ -147,22 +287,47 @@ export default struct MissionTab {
         this.tasks = currentLocalTasks;
         this.extractProjects();
 
-        await storage.setUserData(this.currentUsername, StorageKeys.FOLLOW_UP_TASKS, JSON.stringify(this.tasks));
+        console.log('========================================');
+        console.log('✅ 同步完成');
+        console.log(`任务总数: ${this.tasks.length}`);
+        console.log(`新增: ${addedCount} 条`);
+        console.log(`更新: ${updatedCount} 条`);
+        console.log(`下载图片: ${imageMap.size}/${imageUrls.length} 成功`);
+        console.log('========================================');
+
+        await storage.setUserData(
+          this.currentUsername,
+          StorageKeys.FOLLOW_UP_TASKS,
+          JSON.stringify(this.tasks)
+        );
 
         const now = Date.now();
-        await storage.setUserData(this.currentUsername, StorageKeys.LAST_SYNC_TIME, now.toString());
+        await storage.setUserData(
+          this.currentUsername,
+          StorageKeys.LAST_SYNC_TIME,
+          now.toString()
+        );
         await this.loadLastSyncTime();
 
-        if (addedCount > 0) {
-          this.toastController.show(`同步成功，新增 ${addedCount} 条任务`);
-        } else {
-          this.toastController.show('同步成功，暂无新任务');
+        // ✅ 更新提示信息，包含图片下载数量
+        let message = '✅ 同步成功';
+        const details: string[] = [];
+
+        if (addedCount > 0) details.push(`新增 ${addedCount} 条`);
+        if (updatedCount > 0) details.push(`更新 ${updatedCount} 条`);
+        if (imageMap.size > 0) details.push(`下载 ${imageMap.size} 张图片`);
+
+        if (details.length > 0) {
+          message += `：${details.join('，')}`;
         }
+
+        this.toastController.show(message);
 
       } else {
         this.toastController.show(response.message || '同步失败');
       }
     } catch (e) {
+      console.error('❌ 同步失败:', e);
       this.toastController.show('同步失败，请检查网络');
     } finally {
       this.syncing = false;
@@ -181,9 +346,13 @@ export default struct MissionTab {
 
   getFilteredTasks(): FollowUpTask[] {
     let filteredTasks = this.tasks;
+
+    // 项目筛选
     if (this.selectedProjectId !== 0) {
       filteredTasks = filteredTasks.filter(task => task.project_id === this.selectedProjectId);
     }
+
+    // 状态筛选
     if (this.currentFilterIndex === 1) {
       filteredTasks = filteredTasks.filter(task => task.state === 0);
     } else if (this.currentFilterIndex === 2) {
@@ -193,6 +362,8 @@ export default struct MissionTab {
     } else if (this.currentFilterIndex === 4) {
       filteredTasks = filteredTasks.filter(task => this.isTaskUploaded(task));
     }
+
+    // 搜索筛选
     if (this.searchText) {
       const keyword = this.searchText.toLowerCase();
       filteredTasks = filteredTasks.filter(task =>
@@ -202,7 +373,13 @@ export default struct MissionTab {
       task.creator.toLowerCase().includes(keyword)
       );
     }
-    return filteredTasks;
+
+    const sortedTasks = [...filteredTasks].sort((a, b) => {
+      // 按 ID 倒序（大的在前）
+      return b.id - a.id;
+    });
+
+    return sortedTasks;
   }
 
   getStateText(state: number): string {

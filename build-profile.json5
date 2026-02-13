@@ -5,13 +5,13 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "storeFile": "C:/Users/thewbb/.ohos/config/default_XbioApp_80nWiLGi_MinWYrl7ZQIe6CmOUEgEHsQOY9W9UH43ck=.p12",
-          "storePassword": "0000001AE66B4F02C7DFD6578CD3F72CB816139D5A2A2A634BF9841DCB501EBEB795735E6A0C6FF2A682",
-          "keyAlias": "debugKey",
-          "keyPassword": "0000001A0AAAE7BBA014EB96B4048BEB3861FDC2FB478C475546132DCDCFFE98F387F19E9050106490AD",
+          "storeFile": "D:/Dropbox/github/XbioApp/xbioapp.p12",
+          "storePassword": "00000019BD187E1177F4C990096151F3C37DF80D7F8BC57D99803488DB824060F305091F8F962C44ED",
+          "keyAlias": "xbioapp",
+          "keyPassword": "00000019454D8208A1430471046C4C0438F21F0DCB3ED54547416CFF1AC57748876E3732D1068EAC56",
           "signAlg": "SHA256withECDSA",
-          "profile": "D:/Downloads/debug.p7b",
-          "certpath": "D:/Downloads/auto_debug_220086000021978470.cer.cer"
+          "profile": "D:/Dropbox/github/XbioApp/xbioappRelease.p7b",
+          "certpath": "D:/Dropbox/github/XbioApp/xbioapp.cer"
         }
       }
     ],

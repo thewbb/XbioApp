@@ -1302,23 +1302,97 @@ struct FormPage {
 
   @Builder
   ImageField(field: FormField) {
-    Row() {
-      Text(this.getFieldValue(field.field_name) || '点击选择图片')
-        .fontSize(14)
-        .fontColor(this.getFieldValue(field.field_name) ? '#333333' : '#CCCCCC')
-        .layoutWeight(1)
+    Column() {
+      // ✅ 图片描述类型：只显示图片，不显示输入框
+      if (field.show_type === 'imageDesc') {
+        if (field.local_image_path) {
+          // 显示本地图片
+          Image('file://' + field.local_image_path)
+            .width('100%')
+            .objectFit(ImageFit.Contain)
+            .borderRadius(8)
+            .backgroundColor('#F5F5F5')
+            .border({ width: 1, color: '#E5E5E5' })
+            .onError(() => {
+              console.error('图片加载失败:', field.local_image_path);
+            })
+        } else if (field.default_value) {
+          // 降级：显示加载提示
+          Column() {
+            Text('图片加载中...')
+              .fontSize(12)
+              .fontColor('#999999')
+              .padding(20)
+          }
+          .width('100%')
+          .height(150)
+          .backgroundColor('#F5F5F5')
+          .borderRadius(8)
+          .border({ width: 1, color: '#E5E5E5' })
+          .justifyContent(FlexAlign.Center)
+        } else {
+          // 没有图片
+          Column() {
+            Text('暂无图片')
+              .fontSize(12)
+              .fontColor('#999999')
+              .padding(20)
+          }
+          .width('100%')
+          .height(100)
+          .backgroundColor('#F5F5F5')
+          .borderRadius(8)
+          .border({ width: 1, color: '#E5E5E5' })
+          .justifyContent(FlexAlign.Center)
+        }
 
-      Text('🖼️')
-        .fontSize(16)
+        // ✅ imageDesc 类型：不显示输入框
+        // 如果字段有描述文字，可以显示
+        if (field.hint && field.hint.trim() !== '') {
+          Text(field.hint)
+            .fontSize(12)
+            .fontColor('#666666')
+            .margin({ top: 8 })
+            .width('100%')
+        }
+
+      }
+      // ✅ 普通 image 类型：可以上传图片
+      else if (field.show_type === 'image') {
+        // 如果已有图片，显示预览
+        if (this.getFieldValue(field.field_name)) {
+          Image('file://' + this.getFieldValue(field.field_name))
+            .width('100%')
+            .height(200)
+            .objectFit(ImageFit.Contain)
+            .borderRadius(8)
+            .backgroundColor('#F5F5F5')
+            .border({ width: 1, color: '#E5E5E5' })
+            .margin({ bottom: 8 })
+        }
+
+        // 上传按钮
+        Row() {
+          Text(this.getFieldValue(field.field_name) ? '重新选择图片' : '点击选择图片')
+            .fontSize(14)
+            .fontColor(this.getFieldValue(field.field_name) ? '#333333' : '#CCCCCC')
+            .layoutWeight(1)
+
+          Text('🖼️')
+            .fontSize(16)
+        }
+        .width('100%')
+        .height(44)
+        .padding({ left: 12, right: 12 })
+        .backgroundColor('#FFFFFF')
+        .borderRadius(8)
+        .border({ width: 1, color: '#E5E5E5' })
+        .onClick(() => {
+          this.toastController.show('图片上传功能开发中');
+        })
+      }
     }
     .width('100%')
-    .height(44)
-    .padding({ left: 12, right: 12 })
-    .backgroundColor('#FFFFFF')
-    .borderRadius(8)
-    .border({ width: 1, color: '#E5E5E5' })
-    .onClick(() => {
-      this.toastController.show('图片上传功能开发中');
-    })
+    .alignItems(HorizontalAlign.Start)
   }
 }

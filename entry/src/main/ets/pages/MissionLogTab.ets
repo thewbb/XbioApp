@@ -1,5 +1,5 @@
 /**
- * 记录页 (MissionLogTab) - 修复签名同步问题 & 优化显示逻辑
+ * 记录页 (MissionLogTab) - 修复签名同步问题 & 优化显示逻辑 & 添加长按删除功能
  */
 import router from '@ohos.router';
 import { FollowUpTask, FormRecord, BatchUploadMissionRequest, UploadRecordItem } from '../types';
@@ -26,6 +26,10 @@ export default struct MissionLogTab {
   @State toastController: ToastController = new ToastController();
   @State isRefreshing: boolean = false;
 
+  // ✅ 新增：删除确认对话框相关状态
+  @State showDeleteDialog: boolean = false;
+  @State taskToDelete: FollowUpTask | null = null;
+
   async aboutToAppear() {
     await this.loadData();
   }
@@ -37,6 +41,7 @@ export default struct MissionLogTab {
   async loadData() {
     try {
       const tasksStr = await storage.getUserData(this.currentUsername, StorageKeys.FOLLOW_UP_TASKS);
+      console.log(JSON.stringify(tasksStr));
       if (tasksStr) {
         const loadedTasks = JSON.parse(tasksStr) as FollowUpTask[];
         this.tasks = [...loadedTasks];
@@ -248,6 +253,89 @@ export default struct MissionLogTab {
     });
   }
 
+  /**
+   * ✅ 新增：长按触发删除确认
+   */
+  handleLongPress(task: FollowUpTask) {
+    this.taskToDelete = task;
+    this.showDeleteDialog = true;
+  }
+
+  /**
+   * ✅ 新增：确认删除任务的所有本地记录
+   */
+  async confirmDelete() {
+    if (!this.taskToDelete) {
+      return;
+    }
+
+    try {
+      const task = this.taskToDelete;
+
+      // 检查是否有未上传的数据
+      const hasUnuploaded = this.getPendingCount(task) > 0;
+
+      console.log(`删除任务记录: ID=${task.id}, 患者=${task.patient_no || task.name}`);
+
+      // 1. 加载所有任务
+      let allTasks = await storage.loadFollowUpTasks(this.currentUsername);
+
+      // 2. 找到对应任务
+      const taskIndex = allTasks.findIndex(t => t.id === task.id);
+      if (taskIndex === -1) {
+        this.toastController.show('任务不存在');
+        this.showDeleteDialog = false;
+        this.taskToDelete = null;
+        return;
+      }
+
+      // 3. 清空该任务的本地记录和签名
+      allTasks[taskIndex].local_records = [];
+      allTasks[taskIndex].consent_signature = undefined;
+
+      // 4. 重置表单状态
+      if (allTasks[taskIndex].project && allTasks[taskIndex].project!.tables) {
+        allTasks[taskIndex].project!.tables.forEach(table => {
+          table.state = 0;  // 重置为未填写
+        });
+      }
+
+      // 5. 重置任务进度
+      allTasks[taskIndex].percent = '0';
+      allTasks[taskIndex].state = 0;
+
+      // 6. 保存到本地
+      await storage.saveFollowUpTasks(this.currentUsername, allTasks);
+
+      // 7. 刷新列表
+      this.tasks = [...allTasks];
+
+      // 8. 显示提示
+      if (hasUnuploaded) {
+        this.toastController.show('✅ 已删除（包含未上传数据）');
+      } else {
+        this.toastController.show('✅ 已删除');
+      }
+
+      console.log('✅ 删除成功');
+
+    } catch (e) {
+      console.error('❌ 删除失败:', e);
+      this.toastController.show('删除失败');
+    } finally {
+      this.showDeleteDialog = false;
+      this.taskToDelete = null;
+    }
+  }
+
+  /**
+   * ✅ 新增：取消删除
+   */
+  cancelDelete() {
+    this.showDeleteDialog = false;
+    this.taskToDelete = null;
+  }
+
   build() {
     Stack() {
       Column() {
@@ -299,12 +387,95 @@ export default struct MissionLogTab {
       }
       .width('100%').height('100%')
 
+      // ✅ 上传进度蒙层
       if (this.isUploading) {
         Column() {
           LoadingProgress().width(50).height(50).color(Color.White)
           Text(this.uploadProgress).fontSize(16).fontColor(Color.White).margin({ top: 16 })
         }.width('100%').height('100%')
         .backgroundColor('#80000000').justifyContent(FlexAlign.Center).zIndex(999)
+      }
+
+      // ✅ 删除确认对话框
+      if (this.showDeleteDialog) {
+        Column() {
+          Column() {
+            // 标题
+            Text('确认删除？').fontSize(18).fontWeight(FontWeight.Bold).fontColor('#333333')
+              .margin({ bottom: 16 })
+
+            // 内容
+            Column() {
+              if (this.taskToDelete) {
+                Text(`患者：${this.taskToDelete.name || this.taskToDelete.patient_no || '未知'}`)
+                  .fontSize(14).fontColor('#666666').margin({ bottom: 8 })
+                Text(`项目：${this.taskToDelete.project_name || '未知项目'}`)
+                  .fontSize(14).fontColor('#666666').margin({ bottom: 8 })
+
+                Divider().color('#F0F0F0').margin({ top: 8, bottom: 8 })
+
+                // 警告提示
+                Row() {
+                  Text('⚠️').fontSize(16).margin({ right: 6 })
+                  Column() {
+                    Text('将删除该任务的所有本地记录：')
+                      .fontSize(13).fontColor('#FF4D4F').margin({ bottom: 4 })
+                    Text(`• 表单数据（${this.taskToDelete.local_records?.length || 0} 份）`)
+                      .fontSize(12).fontColor('#999999').margin({ bottom: 2 })
+                    if (this.hasConsent(this.taskToDelete)) {
+                      Text('• 知情同意书签名')
+                        .fontSize(12).fontColor('#999999').margin({ bottom: 2 })
+                    }
+                    if (this.getPendingCount(this.taskToDelete) > 0) {
+                      Text(`• 未上传数据（${this.getPendingCount(this.taskToDelete)} 份）`)
+                        .fontSize(12).fontColor('#FF4D4F').fontWeight(FontWeight.Medium)
+                    }
+                  }.alignItems(HorizontalAlign.Start)
+                }
+                .width('100%')
+                .padding(12)
+                .backgroundColor('#FFF7F0')
+                .borderRadius(8)
+                .alignItems(VerticalAlign.Top)
+              }
+            }
+            .width('100%')
+            .margin({ bottom: 20 })
+
+            // 按钮
+            Row() {
+              Button('取消')
+                .fontSize(15)
+                .height(44)
+                .layoutWeight(1)
+                .backgroundColor('#F5F5F5')
+                .fontColor('#666666')
+                .borderRadius(8)
+                .onClick(() => this.cancelDelete())
+
+              Button('确认删除')
+                .fontSize(15)
+                .height(44)
+                .layoutWeight(1)
+                .backgroundColor('#FF4D4F')
+                .fontColor('#FFFFFF')
+                .borderRadius(8)
+                .margin({ left: 12 })
+                .onClick(() => this.confirmDelete())
+            }
+            .width('100%')
+          }
+          .width('85%')
+          .padding(20)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(12)
+          .shadow({ radius: 20, color: '#00000030', offsetY: 4 })
+        }
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#80000000')
+        .justifyContent(FlexAlign.Center)
+        .zIndex(1000)
       }
 
       CustomToast({ controller: this.toastController })
@@ -317,8 +488,14 @@ export default struct MissionLogTab {
       // 1. 头部
       Row() {
         Column() {
-          Text(task.patient_no).fontSize(16).fontWeight(FontWeight.Bold).fontColor('#333333')
-          Text(`项目：${task.project_name}`).fontSize(12).fontColor('#999999').margin({ top: 4 })
+          Text(task.patient_no + "("+task.name+")" || '未知编号')
+            .fontSize(16)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(task.patient_no ? '#333333' : '#999999')
+          Text(`项目：${task.project_name || '未知项目'}`)
+            .fontSize(12)
+            .fontColor('#999999')
+            .margin({ top: 4 })
         }.alignItems(HorizontalAlign.Start)
 
         Blank()
@@ -366,12 +543,10 @@ export default struct MissionLogTab {
             Button('上传数据')
               .fontSize(13)
               .height(30)
-              // ✅ 修改点：按钮变灰逻辑：未签名 OR 有未完成的表单
               .backgroundColor(this.canUpload(task) ? '#FF6B00' : '#CCCCCC')
               .fontColor('#FFFFFF')
               .borderRadius(15)
               .onClick(() => {
-                // 点击事件处理
                 if (this.getUnfinishedCount(task) > 0) {
                   this.toastController.show(`还有 ${this.getUnfinishedCount(task)} 份表单未填写`);
                 } else if (!this.hasConsent(task)) {
@@ -420,5 +595,12 @@ export default struct MissionLogTab {
     .borderRadius(8)
     .margin({ bottom: 0 })
     .shadow({ radius: 4, color: '#00000005', offsetY: 1 })
+    // ✅ 添加长按手势
+    .gesture(
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction(() => {
+          this.handleLongPress(task);
+        })
+    )
   }
 }
