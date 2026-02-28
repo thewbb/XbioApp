@@ -1,20 +1,5 @@
 {
   "app": {
-    "signingConfigs": [
-      {
-        "name": "default",
-        "type": "HarmonyOS",
-        "material": {
-          "storeFile": "D:/Dropbox/github/XbioApp/xbioapp.p12",
-          "storePassword": "00000019BD187E1177F4C990096151F3C37DF80D7F8BC57D99803488DB824060F305091F8F962C44ED",
-          "keyAlias": "xbioapp",
-          "keyPassword": "00000019454D8208A1430471046C4C0438F21F0DCB3ED54547416CFF1AC57748876E3732D1068EAC56",
-          "signAlg": "SHA256withECDSA",
-          "profile": "D:/Dropbox/github/XbioApp/xbioappRelease.p7b",
-          "certpath": "D:/Dropbox/github/XbioApp/xbioapp.cer"
-        }
-      }
-    ],
     "products": [
       {
         "name": "default",
@@ -32,10 +17,25 @@
     ],
     "buildModeSet": [
       {
-        "name": "debug",
+        "name": "debug"
       },
       {
         "name": "release"
+      }
+    ],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\thewbb\\.ohos\\config\\default_XbioApp_7_zKso03TqjnZmxA6litCmDBsVlSGBlraVdimd0KtSg=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B564B93122CE41A42204A20291B9E9E70D2A330A9DE2A127CC5AE23D7E0E2334B12F72FBAFB9BC1",
+          "profile": "C:\\Users\\thewbb\\.ohos\\config\\default_XbioApp_7_zKso03TqjnZmxA6litCmDBsVlSGBlraVdimd0KtSg=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\thewbb\\.ohos\\config\\default_XbioApp_7_zKso03TqjnZmxA6litCmDBsVlSGBlraVdimd0KtSg=.p12",
+          "storePassword": "0000001BE52DA4997677FAB60070D9CB8E63EBC1DA9840EF0ABD23E48EFB06EE0CFFA95BCB8001D154CFC1"
+        }
       }
     ]
   },

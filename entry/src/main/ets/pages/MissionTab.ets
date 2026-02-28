@@ -19,6 +19,8 @@ export default struct MissionTab {
   @Prop currentToken: string = '';
   @Link filterType: number;
   @Link selectedProjectId: number;
+  @State showDeleteDialog: boolean = false;
+  @State taskToDelete: FollowUpTask | null = null;
 
   // ✅ 关键修改点 1: 监听 refreshFlag 的变化
   // 当 Index.ets 的 refreshFlag 增加时，这里会自动触发 onRefreshFlagChange 方法
@@ -77,6 +79,42 @@ export default struct MissionTab {
       console.error('MissionTab: 加载失败', e);
       this.tasks = [];
     }
+  }
+
+  handleLongPress(task: FollowUpTask) {
+    this.taskToDelete = task;
+    this.showDeleteDialog = true;
+  }
+
+  async confirmDeleteTask() {
+    if (!this.taskToDelete) return;
+    const targetId = this.taskToDelete.id;
+    const targetName = this.taskToDelete.name || this.taskToDelete.patient_no;
+    try {
+      // 1. 内存中过滤
+      this.tasks = this.tasks.filter(t => t.id !== targetId);
+      // 2. 更新项目选择器
+      this.extractProjects();
+      // 3. 持久化写回本地 preferences
+      await storage.setUserData(
+        this.currentUsername,
+        StorageKeys.FOLLOW_UP_TASKS,
+        JSON.stringify(this.tasks)
+      );
+      console.log(`🗑️ 已删除任务: ID=${targetId}`);
+      this.toastController.show(`已删除：${targetName}`);
+    } catch (e) {
+      console.error('删除任务失败:', e);
+      this.toastController.show('删除失败，请重试');
+    } finally {
+      this.showDeleteDialog = false;
+      this.taskToDelete = null;
+    }
+  }
+
+  cancelDeleteTask() {
+    this.showDeleteDialog = false;
+    this.taskToDelete = null;
   }
 
   extractProjects() {
@@ -673,6 +711,10 @@ export default struct MissionTab {
                   .backgroundColor('#FFFFFF')
                   .borderRadius(8)
                   .onClick(() => { this.handleTaskClick(task); })
+                  .gesture(
+                    LongPressGesture({ duration: 600 })
+                      .onAction(() => { this.handleLongPress(task); })
+                  )
                 }
               })
             }
@@ -689,6 +731,66 @@ export default struct MissionTab {
       }
       .width('100%')
       // 内层 Column 不再写 height('100%')，避免和 Tabs 高度冲突
+      // ✅ 新增：长按删除确认弹窗
+      if (this.showDeleteDialog && this.taskToDelete !== null) {
+        // 半透明遮罩
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('rgba(0,0,0,0.45)')
+          .onClick(() => { this.cancelDeleteTask(); })
+
+        // 弹窗主体
+        Column() {
+          Text('删除随访任务')
+            .fontSize(17)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#333333')
+            .margin({ bottom: 16 })
+
+          Column() {
+            Text('确定要删除以下随访任务吗？')
+              .fontSize(14).fontColor('#666666').margin({ bottom: 10 })
+            Text(`患者：${this.taskToDelete!.name || '—'}`)
+              .fontSize(15).fontColor('#333333').fontWeight(FontWeight.Medium)
+            Text(`编号：${this.taskToDelete!.patient_no}`)
+              .fontSize(13).fontColor('#999999').margin({ top: 4 })
+            Text(`项目：${this.taskToDelete!.project_name}`)
+              .fontSize(13).fontColor('#999999').margin({ top: 4 })
+          }
+          .width('100%')
+          .padding(14)
+          .backgroundColor('#FFF7F7')
+          .borderRadius(8)
+          .margin({ bottom: 10 })
+
+          Text('⚠️ 仅删除本地数据，下次同步后将重新出现')
+            .fontSize(12)
+            .fontColor('#FF6B00')
+            .textAlign(TextAlign.Center)
+            .margin({ bottom: 22 })
+
+          Row() {
+            Button('取消')
+              .layoutWeight(1).height(44)
+              .backgroundColor('#F5F5F5').fontColor('#666666')
+              .fontSize(15).borderRadius(8)
+              .onClick(() => { this.cancelDeleteTask(); })
+            Blank().width(12)
+            Button('确认删除')
+              .layoutWeight(1).height(44)
+              .backgroundColor('#FF4D4F').fontColor('#FFFFFF')
+              .fontSize(15).fontWeight(FontWeight.Medium).borderRadius(8)
+              .onClick(() => { this.confirmDeleteTask(); })
+          }.width('100%')
+        }
+        .width('76%')
+        .padding({ left: 20, right: 20, top: 24, bottom: 20 })
+        .backgroundColor('#FFFFFF')
+        .borderRadius(16)
+        .shadow({ radius: 20, color: 'rgba(0,0,0,0.12)', offsetX: 0, offsetY: 4 })
+        .position({ x: '12%', y: '28%' })
+      }
 
       CustomToast({ controller: this.toastController })
     }

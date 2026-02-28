@@ -164,16 +164,9 @@ struct MissionPage {
   }
 
   isTableFillable(table: FormTable): boolean {
-    const hasLocalData = this.hasLocalRecord(table.id);
     const isUploaded = this.isRecordUploaded(table.id);
-
-    // 有本地数据但未上传，可以编辑
-    if (hasLocalData && !isUploaded) {
-      return true;
-    }
-
-    // 未填写可以填写
-    return table.state === 0;
+    // ✅ 只要本地未标记已上传，就允许填写（不管服务器 state 是什么）
+    return !isUploaded;
   }
 
   handleConsentClick() {

@@ -6,6 +6,7 @@
  * 2. 公式计算逻辑（支持选项分值计算 A=3）
  * 3. 使用安全的表达式计算器（不使用 eval/new Function）
  * 4. ✅ 新增：支持 client_visible 字段控制（0=不显示但参与计算和保存）
+ * 5. ✅ 新增：select/radio/checkbox 存储 label（如"完全不会"），= 后的数字仅用于公式计算
  */
 import router from '@ohos.router';
 import { FollowUpTask, FormTable, FormField, FormRecord } from '../types';
@@ -108,7 +109,6 @@ struct FormPage {
     );
 
     this.currentTable.fields.forEach((field: FormField) => {
-      // ✅ 所有可编辑的字段都初始化（包括 client_visible=0 的隐藏字段）
       if (field.is_editable === '1') {
         if (savedRecord && savedRecord.data[field.field_name]) {
           data.set(field.field_name, savedRecord.data[field.field_name]);
@@ -127,7 +127,7 @@ struct FormPage {
     });
 
     this.formData = data;
-    this.calculateAllFormulas(); // ✅ 这里会计算所有字段（包括隐藏字段）
+    this.calculateAllFormulas();
 
     if (savedRecord) {
       console.log('✅ 已加载本地保存的数据');
@@ -149,7 +149,8 @@ struct FormPage {
 
   /**
    * ✅ 解析选项列表
-   * 支持 "A=3,B=4" 或 "是,否" 格式
+   * "完全不会=0,≤1周=1" → label="完全不会", value="0"（value 仅用于公式计算）
+   * "是,否"             → label="是",     value="是"
    */
   parseOptions(selectValue: string | undefined): OptionItem[] {
     if (!selectValue || selectValue === '') {
@@ -168,8 +169,8 @@ struct FormPage {
       if (item.includes('=')) {
         const parts = item.split('=');
         items.push({
-          label: parts[0].trim(),
-          value: parts[1].trim()
+          label: parts[0].trim(),  // ✅ 显示文字，也是存储值
+          value: parts[1].trim()   // ✅ 仅用于公式计算
         });
       } else {
         items.push({
@@ -191,29 +192,31 @@ struct FormPage {
 
   /**
    * ✅ 检查选项是否被选中（多选）
+   * 注意：存储和比较都用 label
    */
-  isOptionChecked(fieldName: string, optionValue: string): boolean {
+  isOptionChecked(fieldName: string, optionLabel: string): boolean {
     const currentValue = this.getFieldValue(fieldName);
     if (!currentValue) {
       return false;
     }
     const selectedValues = currentValue.split(',').map(v => v.trim());
-    return selectedValues.includes(optionValue);
+    return selectedValues.includes(optionLabel);
   }
 
   /**
    * ✅ 切换多选选项
+   * 注意：存储和比较都用 label
    */
-  toggleCheckboxOption(fieldName: string, optionValue: string) {
+  toggleCheckboxOption(fieldName: string, optionLabel: string) {
     const currentValue = this.getFieldValue(fieldName);
-    let selectedValues = currentValue ? currentValue.split(',').map(v => v.trim()).filter(v => v !== '') : [];
+    let selectedValues = currentValue
+      ? currentValue.split(',').map(v => v.trim()).filter(v => v !== '')
+      : [];
 
-    if (selectedValues.includes(optionValue)) {
-      // 移除
-      selectedValues = selectedValues.filter(v => v !== optionValue);
+    if (selectedValues.includes(optionLabel)) {
+      selectedValues = selectedValues.filter(v => v !== optionLabel);
     } else {
-      // 添加
-      selectedValues.push(optionValue);
+      selectedValues.push(optionLabel);
     }
 
     this.setFieldValue(fieldName, selectedValues.join(','));
@@ -243,7 +246,6 @@ struct FormPage {
         const currentValue = this.getFieldValue(field.field_name);
         const newValue = result.toString();
 
-        // 只有值变化时才更新，避免无限循环
         if (currentValue !== newValue) {
           this.formData.set(field.field_name, newValue);
           console.log(`🧮 公式计算: ${field.field_name} = ${result} (公式: ${field.formula})`);
@@ -257,13 +259,9 @@ struct FormPage {
   }
 
   /**
-   * ✅ 核心修复：公式计算逻辑（使用手写解析器）
-   *
-   * 规则：
-   * 1. 公式格式：field1 * 0.5 + field2
-   * 2. 如果 field 的 select_value = "A=3,B=4"，当前选择了 A，则取值 3
-   * 3. 如果 field 的值是纯数字，直接计算
-   * 4. 如果 field 的值是字符串（非数字），尝试匹配选项的 value，否则视为 0
+   * ✅ 公式计算逻辑
+   * - 存储的是 label（如"完全不会"）
+   * - 公式计算时通过 label 反查 value（如"0"）参与运算
    */
   calculateFormula(formula: string): number {
     let expression = formula;
@@ -272,14 +270,12 @@ struct FormPage {
       return 0;
     }
 
-    // 遍历所有字段，替换公式中的变量名为数值
     this.currentTable.fields.forEach(field => {
       const fieldName = field.field_name;
 
-      // 使用正则确保全字匹配（避免 field1 匹配到 field11）
       const regex = new RegExp(`\\b${fieldName}\\b`, 'g');
       if (!regex.test(expression)) {
-        return; // 公式中不包含该字段
+        return;
       }
 
       const rawValue = this.getFieldValue(fieldName);
@@ -287,38 +283,27 @@ struct FormPage {
 
       console.log(`  处理字段 ${fieldName}, 原始值: "${rawValue}"`);
 
-      // 1. 如果字段值为空
       if (!rawValue || rawValue.trim() === '') {
         numValue = 0;
-      }
-      // 2. 如果字段值是纯数字（包括小数）
-      else if (!isNaN(Number(rawValue))) {
+      } else if (!isNaN(Number(rawValue))) {
+        // 纯数字直接使用
         numValue = parseFloat(rawValue);
         console.log(`    -> 数值: ${numValue}`);
-      }
-      // 3. 如果字段值不是数字（可能是选项的 label 或 value）
-      else {
-        // 尝试从选项定义中找对应的数值
+      } else {
+        // 字符串：用 label 反查 value 参与计算
         const options = this.parseOptions(field.select_value);
 
-        // 先检查是否是某个选项的 value（直接匹配）
-        const matchedOption = options.find(opt => opt.value === rawValue);
-        if (matchedOption) {
-          // 如果 value 本身是数字，则使用
-          if (!isNaN(Number(matchedOption.value))) {
-            numValue = parseFloat(matchedOption.value);
-            console.log(`    -> 匹配到选项 value: ${numValue}`);
-          } else {
-            numValue = 0;
-            console.log(`    -> 选项 value 不是数字，使用 0`);
-          }
-        }
-        // 再检查是否是某个选项的 label
-        else {
-          const matchedByLabel = options.find(opt => opt.label === rawValue);
-          if (matchedByLabel && !isNaN(Number(matchedByLabel.value))) {
-            numValue = parseFloat(matchedByLabel.value);
-            console.log(`    -> 匹配到选项 label: ${rawValue}, value: ${numValue}`);
+        // ✅ 优先按 label 匹配（因为存的是 label）
+        const matchedByLabel = options.find(opt => opt.label === rawValue);
+        if (matchedByLabel && !isNaN(Number(matchedByLabel.value))) {
+          numValue = parseFloat(matchedByLabel.value);
+          console.log(`    -> 匹配到 label: "${rawValue}", 计算用 value: ${numValue}`);
+        } else {
+          // 兜底：按 value 匹配
+          const matchedByValue = options.find(opt => opt.value === rawValue);
+          if (matchedByValue && !isNaN(Number(matchedByValue.value))) {
+            numValue = parseFloat(matchedByValue.value);
+            console.log(`    -> 匹配到 value: ${numValue}`);
           } else {
             numValue = 0;
             console.log(`    -> 未匹配到有效选项，使用 0`);
@@ -326,18 +311,14 @@ struct FormPage {
         }
       }
 
-      // 替换公式中的字段名为数值
       expression = expression.replace(regex, numValue.toString());
     });
 
     console.log(`  最终表达式: ${expression}`);
 
     try {
-      // ✅ 使用安全的表达式计算器
       const result = this.evaluateExpression(expression);
       console.log(`  计算结果: ${result}`);
-
-      // 保留两位小数
       return Math.round(result * 100) / 100;
     } catch (err) {
       console.error('  ❌ 计算错误:', err);
@@ -347,20 +328,17 @@ struct FormPage {
 
   /**
    * ✅ 安全的数学表达式计算器（支持 +、-、*、/、()）
-   * 使用逆波兰表达式（RPN）算法
    */
   evaluateExpression(expr: string): number {
-    // 去除空格
     expr = expr.replace(/\s+/g, '');
 
-    // 词法分析：将表达式拆分为 token
     const tokens: string[] = [];
     let numBuffer = '';
 
     for (let i = 0; i < expr.length; i++) {
       const char = expr[i];
 
-      if (char >= '0' && char <= '9' || char === '.') {
+      if ((char >= '0' && char <= '9') || char === '.') {
         numBuffer += char;
       } else if (char === '+' || char === '-' || char === '*' || char === '/' || char === '(' || char === ')') {
         if (numBuffer) {
@@ -379,11 +357,9 @@ struct FormPage {
 
     console.log('  Tokens:', tokens);
 
-    // 转换为逆波兰表达式（后缀表达式）
     const rpn = this.toRPN(tokens);
     console.log('  RPN:', rpn);
 
-    // 计算逆波兰表达式
     return this.calculateRPN(rpn);
   }
 
@@ -403,18 +379,15 @@ struct FormPage {
 
     for (let token of tokens) {
       if (!isNaN(Number(token))) {
-        // 数字直接输出
         output.push(token);
       } else if (token === '(') {
         operators.push(token);
       } else if (token === ')') {
-        // 弹出直到遇到左括号
         while (operators.length > 0 && operators[operators.length - 1] !== '(') {
           output.push(operators.pop()!);
         }
-        operators.pop(); // 弹出 '('
+        operators.pop();
       } else if (precedence[token] !== undefined) {
-        // 运算符
         while (
           operators.length > 0 &&
             operators[operators.length - 1] !== '(' &&
@@ -426,7 +399,6 @@ struct FormPage {
       }
     }
 
-    // 弹出剩余的运算符
     while (operators.length > 0) {
       output.push(operators.pop()!);
     }
@@ -528,7 +500,6 @@ struct FormPage {
         const selectedDate = new Date(year, month, day);
         const dateStr = this.formatDate(selectedDate);
         this.setFieldValue(field.field_name, dateStr);
-
         console.log('日期已更新:', dateStr);
       }
     });
@@ -578,10 +549,8 @@ struct FormPage {
     }
 
     for (let field of this.currentTable.fields) {
-      // ✅ 只验证可见、可编辑的必填字段
-      // client_visible=0 的字段不参与验证
       if (
-        field.client_visible !== 0 &&  // ✅ 隐藏字段不验证
+        field.client_visible !== 0 &&
         this.isFieldVisible(field) &&
           field.is_editable === '1' &&
           field.required === 1
@@ -599,23 +568,19 @@ struct FormPage {
 
   /**
    * ✅ 判断字段是否应该显示
-   * 规则：
-   * 1. 如果 client_visible === 0，不显示（但依然参与计算和保存）
-   * 2. 如果有 control_by 控制，检查控制条件
+   * control_by 格式：field1.1,field1.3（.后面是选项序号，从1开始）
+   * 比较时用 label（因为存储的是 label）
    */
   isFieldVisible(field: FormField): boolean {
-    // ✅ 优先检查 client_visible（0=不显示，1=显示）
     if (field.client_visible === 0) {
       console.log(`字段 ${field.field_name} 被隐藏 (client_visible=0)`);
       return false;
     }
 
-    // 如果没有 control_by，直接显示
     if (!field.control_by || field.control_by.trim() === '') {
       return true;
     }
 
-    // 解析 control_by，格式：field1.1,field1.3
     const controls = field.control_by.split(',').map(v => v.trim());
 
     for (let i = 0; i < controls.length; i++) {
@@ -624,7 +589,6 @@ struct FormPage {
         continue;
       }
 
-      // 分割字段名和选项索引，如 "field1.1" -> ["field1", "1"]
       const parts = control.split('.');
       if (parts.length !== 2) {
         continue;
@@ -633,13 +597,11 @@ struct FormPage {
       const controlFieldName = parts[0];
       const controlOptionIndex = parseInt(parts[1]);
 
-      // 获取控制字段的当前值
       const controlFieldValue = this.getFieldValue(controlFieldName);
       if (!controlFieldValue) {
         continue;
       }
 
-      // 获取控制字段的选项列表
       const controlField = this.currentTable?.fields?.find(f => f.field_name === controlFieldName);
       if (!controlField) {
         continue;
@@ -650,17 +612,15 @@ struct FormPage {
         continue;
       }
 
-      // 检查当前值是否匹配指定的选项（索引从 1 开始）
-      const targetOption = options[controlOptionIndex - 1];
+      // ✅ 用 label 比较（因为存储的是 label）
+      const targetLabel = options[controlOptionIndex - 1].label;
 
-      // 支持多选（逗号分隔）
-      const selectedValues = controlFieldValue.split(',').map(v => v.trim());
-      if (selectedValues.includes(targetOption.value)) {
+      const selectedLabels = controlFieldValue.split(',').map(v => v.trim());
+      if (selectedLabels.includes(targetLabel)) {
         return true;
       }
     }
 
-    // 如果没有任何控制条件满足，则不显示
     return false;
   }
 
@@ -670,7 +630,6 @@ struct FormPage {
     try {
       this.saving = true;
 
-      // ✅ 保存所有字段（包括 client_visible=0 的隐藏字段）
       const dataObj: Record<string, string> = {};
       this.formData.forEach((value: string, key: string) => {
         dataObj[key] = value;
@@ -716,23 +675,21 @@ struct FormPage {
     try {
       this.submitting = true;
 
-      // ✅ 保存所有字段（包括 client_visible=0 的隐藏字段）
       const dataObj: Record<string, string> = {};
       this.formData.forEach((value: string, key: string) => {
         dataObj[key] = value;
       });
 
-      console.log('📦 提交的表单数据（包括隐藏字段）:', JSON.stringify(dataObj));
+      console.log('📦 提交的表单数据:', JSON.stringify(dataObj));
 
       const record: FormRecord = {
         table_id: this.currentTable!.id,
         step_id: this.currentTable!.step_id,
         data: dataObj,
         filled_time: new Date().toLocaleString('zh-CN'),
-        is_uploaded: false  // 标记为未上传
+        is_uploaded: false
       };
 
-      // 只保存到本地
       const saveSuccess = await storage.saveFormRecord(
         this.currentUsername,
         this.currentTask!.id,
@@ -742,10 +699,9 @@ struct FormPage {
       this.submitting = false;
 
       if (saveSuccess) {
-        console.log('✅ 本地保存成功（包括隐藏字段）');
+        console.log('✅ 本地保存成功');
         this.toastController.show('✅ 保存成功，可在记录页面上传');
 
-        // ✅ 修复：确保返回上一页
         if (this.uiContext) {
           this.uiContext.getRouter().back();
         }
@@ -805,10 +761,7 @@ struct FormPage {
         .padding({ left: 16, right: 16 })
         .backgroundColor('#FFFFFF')
         .justifyContent(FlexAlign.SpaceBetween)
-        .border({
-          width: { bottom: 0.5 },
-          color: '#E5E5E5'
-        })
+        .border({ width: { bottom: 0.5 }, color: '#E5E5E5' })
 
         // 表单内容区域
         if (!this.currentTable) {
@@ -863,7 +816,6 @@ struct FormPage {
               // 表单字段
               this.FormFields()
 
-              // 底部留白
               Column()
                 .width('100%')
                 .height(20)
@@ -884,10 +836,7 @@ struct FormPage {
             .fontSize(16)
             .fontColor('#FF6B00')
             .backgroundColor('#FFFFFF')
-            .border({
-              width: 1,
-              color: '#FF6B00'
-            })
+            .border({ width: 1, color: '#FF6B00' })
             .width('48%')
             .height(44)
             .borderRadius(8)
@@ -914,15 +863,11 @@ struct FormPage {
         .padding(16)
         .backgroundColor('#FFFFFF')
         .justifyContent(FlexAlign.SpaceBetween)
-        .border({
-          width: { top: 0.5 },
-          color: '#E5E5E5'
-        })
+        .border({ width: { top: 0.5 }, color: '#E5E5E5' })
       }
       .width('100%')
       .height('100%')
 
-      // Toast 组件
       CustomToast({ controller: this.toastController })
     }
     .width('100%')
@@ -956,12 +901,9 @@ struct FormPage {
 
   @Builder
   FormFieldItem(field: FormField) {
-    // ✅ 优先检查 client_visible (0=不显示, 1=显示)
     if (field.client_visible === 0) {
-      // 完全不渲染（包括占位空间都不要）
       Column().width(0).height(0)
     } else if (!this.isFieldVisible(field)) {
-      // 不显示该字段（受 control_by 控制）
       Column().width(0).height(0)
     } else if (field.show_type === 'description') {
       Text(field.annotation)
@@ -977,7 +919,6 @@ struct FormPage {
         .margin({ top: 8, bottom: 8 })
     } else {
       Column() {
-        // 字段标签
         Row() {
           if (field.required === 1) {
             Text('* ')
@@ -999,7 +940,6 @@ struct FormPage {
         .width('100%')
         .margin({ bottom: 8 })
 
-        // 根据 show_type 渲染不同类型的输入控件
         if (field.show_type === 'input') {
           this.InputField(field)
         } else if (field.show_type === 'decimal') {
@@ -1221,33 +1161,85 @@ struct FormPage {
     Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
       ForEach(this.getFieldOptions(field), (option: OptionItem, index: number) => {
         Row() {
-          Radio({ value: option.value, group: field.field_name })
-            .checked(this.getFieldValue(field.field_name) === option.value)
-            .onChange((isChecked: boolean) => {
-              if (isChecked) {
-                this.setFieldValue(field.field_name, option.value);
-              }
-            })
+          Row() {
+            if (this.getFieldValue(field.field_name) === option.label) {
+              Row()
+                .width(10)
+                .height(10)
+                .borderRadius(5)
+                .backgroundColor('#FF6B00')
+            }
+          }
+          .width(18)
+          .height(18)
+          .borderRadius(9)
+          .border({
+            width: 2,
+            color: this.getFieldValue(field.field_name) === option.label ? '#FF6B00' : '#CCCCCC'
+          })
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
 
           Text(option.label)
             .fontSize(14)
-            .fontColor('#333333')
+            .fontColor(this.getFieldValue(field.field_name) === option.label ? '#FF6B00' : '#333333')
+            .fontWeight(this.getFieldValue(field.field_name) === option.label ? FontWeight.Medium : FontWeight.Normal)
             .margin({ left: 8 })
-            .onClick(() => {
-              this.setFieldValue(field.field_name, option.value);
-            })
         }
         .height(36)
         .padding({ left: 4, right: 12 })
         .margin({ right: 8, bottom: 8 })
-      }, (option: OptionItem, index: number) => `${field.field_name}_radio_${index}`)
+        .onClick(() => {
+          // ✅ 存 label（如"完全不会"），不存 value（如"0"）
+          this.setFieldValue(field.field_name, option.label);
+          console.log(`[Select] ${field.field_name} = ${option.label}`);
+        })
+      }, (option: OptionItem, index: number) => `${field.field_name}_select_${index}`)
     }
     .width('100%')
   }
 
   @Builder
   RadioFieldInline(field: FormField) {
-    this.SelectFieldInline(field);
+    Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+      ForEach(this.getFieldOptions(field), (option: OptionItem, index: number) => {
+        Row() {
+          Row() {
+            if (this.getFieldValue(field.field_name) === option.label) {
+              Row()
+                .width(10)
+                .height(10)
+                .borderRadius(5)
+                .backgroundColor('#FF6B00')
+            }
+          }
+          .width(18)
+          .height(18)
+          .borderRadius(9)
+          .border({
+            width: 2,
+            color: this.getFieldValue(field.field_name) === option.label ? '#FF6B00' : '#CCCCCC'
+          })
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
+
+          Text(option.label)
+            .fontSize(14)
+            .fontColor(this.getFieldValue(field.field_name) === option.label ? '#FF6B00' : '#333333')
+            .fontWeight(this.getFieldValue(field.field_name) === option.label ? FontWeight.Medium : FontWeight.Normal)
+            .margin({ left: 8 })
+        }
+        .height(36)
+        .padding({ left: 4, right: 12 })
+        .margin({ right: 8, bottom: 8 })
+        .onClick(() => {
+          // ✅ 存 label
+          this.setFieldValue(field.field_name, option.label);
+          console.log(`[Radio] ${field.field_name} = ${option.label}`);
+        })
+      }, (option: OptionItem, index: number) => `${field.field_name}_radio_${index}`)
+    }
+    .width('100%')
   }
 
   @Builder
@@ -1255,24 +1247,39 @@ struct FormPage {
     Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
       ForEach(this.getFieldOptions(field), (option: OptionItem, index: number) => {
         Row() {
-          Checkbox()
-            .select(this.isOptionChecked(field.field_name, option.value))
-            .selectedColor('#FF6B00')
-            .onChange((isChecked: boolean) => {
-              this.toggleCheckboxOption(field.field_name, option.value);
-            })
+          Row() {
+            if (this.isOptionChecked(field.field_name, option.label)) {
+              Text('✓')
+                .fontSize(12)
+                .fontColor('#FFFFFF')
+                .fontWeight(FontWeight.Bold)
+            }
+          }
+          .width(18)
+          .height(18)
+          .borderRadius(4)
+          .border({
+            width: 2,
+            color: this.isOptionChecked(field.field_name, option.label) ? '#FF6B00' : '#CCCCCC'
+          })
+          .backgroundColor(this.isOptionChecked(field.field_name, option.label) ? '#FF6B00' : Color.Transparent)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
 
           Text(option.label)
             .fontSize(14)
-            .fontColor('#333333')
+            .fontColor(this.isOptionChecked(field.field_name, option.label) ? '#FF6B00' : '#333333')
+            .fontWeight(this.isOptionChecked(field.field_name, option.label) ? FontWeight.Medium : FontWeight.Normal)
             .margin({ left: 8 })
-            .onClick(() => {
-              this.toggleCheckboxOption(field.field_name, option.value);
-            })
         }
         .height(36)
         .padding({ left: 4, right: 12 })
         .margin({ right: 8, bottom: 8 })
+        .onClick(() => {
+          // ✅ 存 label
+          this.toggleCheckboxOption(field.field_name, option.label);
+          console.log(`[Checkbox] ${field.field_name} 切换: ${option.label}`);
+        })
       }, (option: OptionItem, index: number) => `${field.field_name}_checkbox_${index}`)
     }
     .width('100%')
@@ -1303,10 +1310,8 @@ struct FormPage {
   @Builder
   ImageField(field: FormField) {
     Column() {
-      // ✅ 图片描述类型：只显示图片，不显示输入框
       if (field.show_type === 'imageDesc') {
         if (field.local_image_path) {
-          // 显示本地图片
           Image('file://' + field.local_image_path)
             .width('100%')
             .objectFit(ImageFit.Contain)
@@ -1317,7 +1322,6 @@ struct FormPage {
               console.error('图片加载失败:', field.local_image_path);
             })
         } else if (field.default_value) {
-          // 降级：显示加载提示
           Column() {
             Text('图片加载中...')
               .fontSize(12)
@@ -1331,7 +1335,6 @@ struct FormPage {
           .border({ width: 1, color: '#E5E5E5' })
           .justifyContent(FlexAlign.Center)
         } else {
-          // 没有图片
           Column() {
             Text('暂无图片')
               .fontSize(12)
@@ -1346,8 +1349,6 @@ struct FormPage {
           .justifyContent(FlexAlign.Center)
         }
 
-        // ✅ imageDesc 类型：不显示输入框
-        // 如果字段有描述文字，可以显示
         if (field.hint && field.hint.trim() !== '') {
           Text(field.hint)
             .fontSize(12)
@@ -1356,10 +1357,7 @@ struct FormPage {
             .width('100%')
         }
 
-      }
-      // ✅ 普通 image 类型：可以上传图片
-      else if (field.show_type === 'image') {
-        // 如果已有图片，显示预览
+      } else if (field.show_type === 'image') {
         if (this.getFieldValue(field.field_name)) {
           Image('file://' + this.getFieldValue(field.field_name))
             .width('100%')
@@ -1371,7 +1369,6 @@ struct FormPage {
             .margin({ bottom: 8 })
         }
 
-        // 上传按钮
         Row() {
           Text(this.getFieldValue(field.field_name) ? '重新选择图片' : '点击选择图片')
             .fontSize(14)
