@@ -30,6 +30,8 @@ struct FormPage {
   @State saving: boolean = false;
   @State toastController: ToastController = new ToastController();
 
+  @State readOnly: boolean = false;
+
   private backTimer: number = -1;
   private uiContext: UIContext | null = null;
 
@@ -52,6 +54,10 @@ struct FormPage {
 
     if (params && params['username']) {
       this.currentUsername = params['username'] as string;
+    }
+
+    if (params['readOnly'] !== undefined) {
+      this.readOnly = params['readOnly'] as boolean;
     }
 
     console.log('任务ID:', this.currentTask?.id);

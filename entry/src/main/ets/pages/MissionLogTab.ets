@@ -26,6 +26,9 @@ export default struct MissionLogTab {
   @State toastController: ToastController = new ToastController();
   @State isRefreshing: boolean = false;
 
+  @State showRetryDialog: boolean = false;
+  @State taskToRetry: FollowUpTask | null = null;
+
   // ✅ 新增：删除确认对话框相关状态
   @State showDeleteDialog: boolean = false;
   @State taskToDelete: FollowUpTask | null = null;
@@ -253,12 +256,16 @@ export default struct MissionLogTab {
     });
   }
 
-  /**
-   * ✅ 新增：长按触发删除确认
-   */
   handleLongPress(task: FollowUpTask) {
-    this.taskToDelete = task;
-    this.showDeleteDialog = true;
+    if (this.getPendingCount(task) === 0) {
+      // 已上传 -> 询问是否重新上传
+      this.taskToRetry = task;
+      this.showRetryDialog = true;
+    } else {
+      // 未上传 -> 原有删除逻辑
+      this.taskToDelete = task;
+      this.showDeleteDialog = true;
+    }
   }
 
   /**
@@ -328,6 +335,40 @@ export default struct MissionLogTab {
     }
   }
 
+
+  async confirmRetry() {
+    if (!this.taskToRetry) return;
+    const task = this.taskToRetry;
+    this.showRetryDialog = false;
+    this.taskToRetry = null;
+
+    // 把所有 local_records 标记为未上传
+    if (task.local_records) {
+      task.local_records = task.local_records.map((r: FormRecord) => {
+        return {
+          table_id: r.table_id,
+          step_id: r.step_id,
+          data: r.data,
+          filled_time: r.filled_time,
+          is_uploaded: false   // 重置为未上传
+        } as FormRecord;
+      });
+    }
+
+    // 同步到本地存储
+    let allTasks = await storage.loadFollowUpTasks(this.currentUsername);
+    const idx = allTasks.findIndex(t => t.id === task.id);
+    if (idx !== -1) {
+      allTasks[idx] = task;
+      await storage.saveFollowUpTasks(this.currentUsername, allTasks);
+    }
+    this.tasks = [...allTasks];
+
+    // 触发上传
+    await this.handleUpload(task);
+  }
+
+
   /**
    * ✅ 新增：取消删除
    */
@@ -394,6 +435,46 @@ export default struct MissionLogTab {
           Text(this.uploadProgress).fontSize(16).fontColor(Color.White).margin({ top: 16 })
         }.width('100%').height('100%')
         .backgroundColor('#80000000').justifyContent(FlexAlign.Center).zIndex(999)
+      }
+
+      // 重新上传确认对话框
+      if (this.showRetryDialog && this.taskToRetry) {
+        Column() {
+          Column() {
+            Text('重新上传？').fontSize(18).fontWeight(FontWeight.Bold).fontColor('#333333')
+              .margin({ bottom: 16 })
+
+            Text(`患者：${this.taskToRetry.name || this.taskToRetry.patient_no}`)
+              .fontSize(14).fontColor('#666666').margin({ bottom: 8 })
+            Text(`项目：${this.taskToRetry.project_name || '未知项目'}`)
+              .fontSize(14).fontColor('#666666').margin({ bottom: 8 })
+
+            Divider().color('#F0F0F0').margin({ top: 8, bottom: 8 })
+
+            Text('将重置该随访的上传状态并重新上传，用于修复历史数据不完整的情况。')
+              .fontSize(13).fontColor('#FF6B00').textAlign(TextAlign.Start)
+              .margin({ bottom: 16 })
+
+            Row() {
+              Button('取消')
+                .fontSize(15).height(44).layoutWeight(1)
+                .backgroundColor('#F5F5F5').fontColor('#666666').borderRadius(8)
+                .onClick(() => {
+                  this.showRetryDialog = false;
+                  this.taskToRetry = null;
+                })
+              Button('确认重新上传')
+                .fontSize(15).height(44).layoutWeight(1)
+                .backgroundColor('#FF6B00').fontColor('#FFFFFF').borderRadius(8)
+                .margin({ left: 12 })
+                .onClick(() => this.confirmRetry())
+            }.width('100%')
+          }
+          .width('85%').padding(20).backgroundColor('#FFFFFF')
+          .borderRadius(12).shadow({ radius: 20, color: '#00000030', offsetY: 4 })
+        }
+        .width('100%').height('100%').backgroundColor('#80000000')
+        .justifyContent(FlexAlign.Center).zIndex(1001)
       }
 
       // ✅ 删除确认对话框

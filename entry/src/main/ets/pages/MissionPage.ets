@@ -25,6 +25,7 @@ struct MissionPage {
   @State token: string = '';
   @State toastController: ToastController = new ToastController();
 
+
   async aboutToAppear() {
     // 获取路由参数
     const params = router.getParams() as Record<string, Object>;
@@ -38,6 +39,7 @@ struct MissionPage {
     if (params && params['username']) {
       this.currentUsername = params['username'] as string;
     }
+
 
     if (!this.currentTask) {
       this.toastController.show('任务数据错误');
@@ -163,10 +165,14 @@ struct MissionPage {
     return state === 1 ? '✓' : '○';
   }
 
-  isTableFillable(table: FormTable): boolean {
-    const isUploaded = this.isRecordUploaded(table.id);
-    // ✅ 只要本地未标记已上传，就允许填写（不管服务器 state 是什么）
-    return !isUploaded;
+  // 改为：区分"可编辑"和"可查看"
+  isTableEditable(table: FormTable): boolean {
+    return !this.isRecordUploaded(table.id);
+  }
+
+  isTableViewable(table: FormTable): boolean {
+    // 已上传或本地有记录，都可以查看
+    return this.hasLocalRecord(table.id) || table.state === 1;
   }
 
   handleConsentClick() {
@@ -188,31 +194,41 @@ struct MissionPage {
 
   handleFormClick(table: FormTable) {
     const isUploaded = this.isRecordUploaded(table.id);
+    const hasLocal = this.hasLocalRecord(table.id);
 
-    if (table.state === 1 && isUploaded) {
-      this.toastController.show('该表单已提交，无法修改');
-      return;
-    }
-
-    if (this.isTableFillable(table)) {
-      if (!this.hasConsent()) {
-        this.toastController.show('提醒：需签署知情同意书后才能上传');
-      }
-
+    // 已上传：允许只读查看
+    if (isUploaded) {
       router.pushUrl({
         url: 'pages/FormPage',
         params: {
           task: this.currentTask,
           table: table,
           token: this.token,
-          username: this.currentUsername
+          username: this.currentUsername,
+          readOnly: true   // ← 传入只读标志
         }
       }).catch((err: Error) => {
         this.toastController.show('打开失败');
       });
-    } else {
-      this.toastController.show('该表单已填写');
+      return;
     }
+
+    // 未上传：原有逻辑，允许填写/编辑
+    if (!this.hasConsent()) {
+      this.toastController.show('提醒：需签署知情同意书后才能上传');
+    }
+    router.pushUrl({
+      url: 'pages/FormPage',
+      params: {
+        task: this.currentTask,
+        table: table,
+        token: this.token,
+        username: this.currentUsername,
+        readOnly: false
+      }
+    }).catch((err: Error) => {
+      this.toastController.show('打开失败');
+    });
   }
 
   getTaskStats(): TaskStats {
@@ -449,7 +465,7 @@ struct MissionPage {
       Column() {
         Row() {
           Text(table.step_name).fontSize(15).fontWeight(FontWeight.Medium)
-            .fontColor(this.isTableFillable(table) ? '#333333' : '#999999')
+            .fontColor(this.isTableEditable(table) ? '#333333' : '#999999')
             .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
           Text(this.getTableStateText(table.id, table.state)).fontSize(11).fontColor('#FFFFFF')
             .padding({ left: 8, right: 8, top: 3, bottom: 3 }).backgroundColor(this.getTableStateColor(table.id, table.state))
@@ -466,7 +482,14 @@ struct MissionPage {
               Text('继续编辑').fontSize(12).fontColor('#1890FF').fontWeight(FontWeight.Medium)
               Text('›').fontSize(14).fontColor('#1890FF').margin({ left: 2 })
             }
-          } else if (table.state === 1) {
+            // 改为：
+          } else if (this.isRecordUploaded(table.id)) {
+            Row() {
+              Text('查看').fontSize(12).fontColor('#52C41A').fontWeight(FontWeight.Medium)
+              Text('›').fontSize(14).fontColor('#52C41A').margin({ left: 2 })
+            }
+          } else if (table.state === 1 && !this.hasLocalRecord(table.id)) {
+            // 服务器显示已完成但本地无记录（理论上不应出现）
             Text('已完成').fontSize(12).fontColor('#52C41A').fontWeight(FontWeight.Medium)
           } else {
             Row() {
@@ -477,10 +500,10 @@ struct MissionPage {
         }.width('100%')
       }.layoutWeight(1)
     }
-    .width('100%').padding(14).backgroundColor(this.isTableFillable(table) ? '#FFFFFF' : '#FAFAFA')
+    .width('100%').padding(14).backgroundColor(this.isTableEditable(table) ? '#FFFFFF' : '#FAFAFA').opacity(1.0)
     .borderRadius(12).margin({ bottom: index < this.currentTask!.project!.tables.length - 1 ? 10 : 0 })
-    .opacity(this.isTableFillable(table) ? 1.0 : 0.75)
-    .shadow({ radius: 6, color: this.isTableFillable(table) ? '#00000008' : '#00000003', offsetX: 0, offsetY: 2 })
+    .opacity(this.isTableEditable(table) ? 1.0 : 0.75)
+    .shadow({ radius: 6, color: this.isTableEditable(table) ? '#00000008' : '#00000003', offsetX: 0, offsetY: 2 })
     .onClick(() => { this.handleFormClick(table); })
   }
 }
