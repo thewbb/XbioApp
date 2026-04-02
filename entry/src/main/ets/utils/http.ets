@@ -8,7 +8,7 @@ import fileIo from '@ohos.file.fs';
 
 class HttpUtil {
   private token: string = '';
-  private baseUrl: string = 'http://127.0.0.1:8080/Xbiosms_war_exploded';  // 默认值
+  private baseUrl: string = 'http://172.30.249.228:8080';  // 默认值
 
   /**
    * ✅ 初始化 - 加载服务器地址
@@ -88,7 +88,7 @@ class HttpUtil {
    */
   private async request(url: string, method: string, data?: Object): Promise<ApiResponse> {
     const httpRequest = http.createHttp();
-
+console.log(url + ":" + JSON.stringify(data))
     try {
       const response = await httpRequest.request(url, {
         method: method as http.RequestMethod,
