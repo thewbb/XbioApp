@@ -35,7 +35,6 @@ struct UserPage {
     console.log('UserPage 页面加载...');
     try {
       await storage.init();
-      await http.init();  // ✅ 初始化 HTTP 工具
       await this.loadLastUsername();
       await this.loadServerUrl();  // ✅ 加载服务器地址
       console.log('UserPage 页面加载完成');
